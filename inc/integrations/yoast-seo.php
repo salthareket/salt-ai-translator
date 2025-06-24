@@ -17,6 +17,7 @@ class SEOIntegration{
         add_filter('wpseo_twitter_description', [$this, 'frontend_meta_description'], 10, 2);
         //add_filter('wpseo_frontend_presenters', [$this, 'frontend_schema_description'], 20);
         //add_filter('wpseo_schema_needs_rebuild', '__return_true');
+        add_filter('get_post_metadata', [$this, 'frontend_image_alt'], 10, 4);
     }
 
     public function is_active(): bool {
@@ -95,6 +96,27 @@ class SEOIntegration{
 
         return $presenters;
     }
+    public function frontend_image_alt($value, $object_id, $meta_key, $single) {
+        $integration = $this->container->get('integration');
+        $current_lang = $integration->current_language;
+        $default_lang = $integration->default_language;
+
+        if ($meta_key !== '_wp_attachment_image_alt' || get_post_type($object_id) !== 'attachment') {
+            return $value;
+        }
+
+        if ($current_lang === $default_lang || is_admin()) {
+            return $value;
+        }
+
+        $original = $value[0] ?? '';
+
+        $translated = get_post_meta($object_id, "_salt_image_alt_{$current_lang}", true);
+        $translated =  !empty($translated) ? $translated : $original;
+
+        return [$translated];
+    }
+
 
     public function get_meta_description(int $id, string $lang = "", string $type = "post"): ?string {
         $meta_key = !empty($lang) ? '_salt_metadesc_' . $lang : '_yoast_wpseo_metadesc';
@@ -163,6 +185,17 @@ class SEOIntegration{
         $plugin->log($content);
 
         $system = $translator->prompts["meta_desc"]["system"]();
+        /*$system = "You are an assistant that generates SEO meta descriptions. Keep them under 155 characters, clear, informative, and natural. Do not return anything except the description. Do not include quote characters at the start or end. No explanations.";
+
+        if(!empty($options["seo"]["meta_desc"]["prompt"])){
+            $system .= $options["seo"]["meta_desc"]["prompt"];
+        }
+        $user = "Generate a meta description for the following content.";
+        if ($title) {
+            $user .= "\n\nTitle: " . $title;
+        }
+        $user .= "\n\nContent:\n" . trim($clean);*/
+
         $user = $translator->prompts["meta_desc"]["user"]("", $title, $content);
 
         $messages = [
@@ -183,5 +216,6 @@ class SEOIntegration{
         }
         return null;
     }
+
 
 }

@@ -31,28 +31,24 @@ class Translator {
                 'input_price' => 0.0005,
                 'output_price' => 0.0015,
                 'unit' => '1K token',
-                'vision' => false
             ],
             'gpt-4' => [
                 'name' => 'GPT-4',
                 'input_price' => 0.01,
                 'output_price' => 0.03,
                 'unit' => '1K token',
-                'vision' => false
             ],
             'gpt-4-turbo' => [
                 'name' => 'GPT-4 Turbo',
                 'input_price' => 0.01,
                 'output_price' => 0.03,
                 'unit' => '1K token',
-                'vision' => false
             ],
             'gpt-4o' => [
                 'name' => 'GPT-4 Omni',
                 'input_price' => 0.005,
                 'output_price' => 0.015,
                 'unit' => '1K token',
-                'vision' => true
             ],
         ];
         $this->temperatures = [
@@ -69,10 +65,10 @@ class Translator {
             '1.0' => __('Chaos Mode', 'salt-ai-translator'),
             '1.1' => __('Overdrive Madness', 'salt-ai-translator'),
         ];
-        $this->model = 'gpt-4o';
-        $this->model_meta_desc = 'gpt-4o';
-        $this->model_image_alttext = 'gpt-4o';
-        $this->temperature = (float) '0.2';
+        $this->model = 'gpt-3.5-turbo';
+        $this->model_meta_desc = 'gpt-4';
+        $this->model_image_alttext = 'gpt-4';
+        $this->temperature = (float) '0.3';
         $this->temperature_meta_desc = (float) '0.5';
         $this->temperature_image_alttext = (float) '0.4';
         $this->api_url = 'https://api.openai.com/v1/chat/completions';
@@ -81,8 +77,7 @@ class Translator {
                 "system" => function($lang="") use (&$options){
                     $prompt = "You are a professional website content translator. 
                             - Target translation language: [{$lang}] 
-                            - Do not change any tag, attribute or shortcode.
-                            - The input may contain HTML and WordPress shortcodes, don^t change.
+                            - The input may contain HTML and WordPress shortcodes.
                             - Translate only the visible text content between HTML tags.
                             - DO NOT translate or alter any HTML tags, tag names, or attribute names.
                             - DO NOT translate or alter any attribute values such as 'class', 'id', 'data-*', 'href', 'src', 'style', 'title', etc. This includes keeping all class names and data-* values exactly as they are, even if they contain human-readable words.
@@ -96,22 +91,7 @@ class Translator {
                             - Avoid translating any attribute value, even if it appears to be human language — assume all attributes are technical code.
                             - Do NOT summarize, shorten, rephrase or reword the input in any way.
                             - Copy the text segments exactly, word for word.
-                            Your job is to translate only the human-visible content (inner text), leaving all structure, code, and attribute values untouched.";/**/
-
-                    /*$prompt_2 = "You are a professional website content translator.
-                            - Translate to: [{$lang}]
-                            - The input is full HTML and may include WordPress shortcodes.
-                            - DO NOT translate or change:
-                              • Any HTML tag, tag name, or structure
-                              • Any attribute name or value (class, id, href, style, data-*, title, etc.)
-                              • Any shortcode inside square brackets (e.g., [shortcode], [contact_form id='x'])
-                            - Only translate the visible text between tags.
-                            - DO NOT remove, add, or change:
-                              • Any tag, attribute, shortcode, punctuation, or spacing
-                            - DO NOT rephrase, summarize, or rewrite the meaning.
-                            - DO NOT encode HTML entities or escape characters.
-                            - DO NOT add XML headers like <?xml … ?>
-                            - Return valid HTML with structure exactly preserved.";*/
+                            Your job is to translate only the human-visible content (inner text), leaving all structure, code, and attribute values untouched.";
                             if (!empty($options["prompt"])) {
                                 $prompt .= " " . trim($options["prompt"]);
                             }
@@ -177,7 +157,7 @@ class Translator {
 
             if ($code === 200 && isset($data['choices'][0]['message']['content'])) {
                 $text = $data['choices'][0]['message']['content'];
-                $text = str_replace(['<wrapper>', '</wrapper>'], '', $text);
+                //$text = str_replace(['<wrapper>', '</wrapper>'], '', $text);
                 return $text;
             }
 
@@ -207,13 +187,10 @@ class Translator {
             return mb_convert_encoding(pack('H*', $match[1]), 'UTF-8', 'UCS-2BE');
         }, $text);
         if (!$this->should_translate($text)) return $text;
-
-        $text = preg_replace("/>\s*\n\s*</", '><', $text);
-        $text = trim(preg_replace('/\s+/', ' ', $text));
         
-        if(!filter_var($text, FILTER_VALIDATE_URL)){
+        /*if(!filter_var($text, FILTER_VALIDATE_URL)){
             $text = "<wrapper>" . $text . "</wrapper>";
-        }
+        }*/
         
         $system = $this->prompts["default"]["system"]($lang);
         /*if (!empty($options["prompt"])) {

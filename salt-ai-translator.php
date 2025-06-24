@@ -161,8 +161,8 @@ class Salt_AI_Translator_Plugin {
             'translator'           => '',
             'prompt'               => '',
             'model'                => '',
-            'temperature'          => '0.2',
-            'retranslate' => 0,
+            'temperature'          => '0.3',
+            'retranslate_existing' => 0,
             'auto_translate'       => 0,
             'exclude_post_types'   => [],
             'exclude_taxonomies'   => [],
@@ -191,10 +191,10 @@ class Salt_AI_Translator_Plugin {
                 ],
             ],
             'menu' => [
-                'retranslate' => 0
+                'retranslate' => false
             ],
             'strings' => [
-                'retranslate' => 0
+                'retranslate' => false
             ],
             'keys' => [
                 'pending'   => '_salt_translate_pending',
@@ -347,7 +347,7 @@ class Salt_AI_Translator_Plugin {
             $existing['temperature'] = $input['temperature'] ?? '';
         }
 
-        $existing['retranslate'] = isset($input['retranslate']) ? 1 : 0;
+        $existing['retranslate_existing'] = isset($input['retranslate_existing']) ? 1 : 0;
         $existing['auto_translate'] = isset($input['auto_translate']) ? 1 : 0;
         $existing['exclude_post_types'] = $input['exclude_post_types'] ?? [];
         $existing['exclude_taxonomies'] = $input['exclude_taxonomies'] ?? [];
@@ -1161,6 +1161,21 @@ class Salt_AI_Translator_Plugin {
         return strip_tags($text);
     }
 
+
+
+
+
+
+
+
+    public function is_content_changed($post){
+        $current_hash = md5($post->post_content);
+        $previous_hash = get_post_meta($post->ID, '_salt_translate_content_hash', true);
+        if ($current_hash !== $previous_hash) {
+            return update_post_meta($post->ID, '_salt_translate_content_hash', $current_hash);
+        }
+        return false;
+    }
     public function is_doing_translate() {
         return !empty($GLOBALS['salt_ai_doing_translate']);
     }
@@ -1177,6 +1192,128 @@ class Salt_AI_Translator_Plugin {
         $formatted = "[{$timestamp}] {$message}\n";
         file_put_contents($log_file, $formatted, FILE_APPEND);
     }
+
+
+    public function meta_description($desc, $post) {
+        $integration = $this->container->get('integration');
+        $current_lang = $integration->current_language;
+        $default_lang = $integration->default_language;
+
+        if ($current_lang === $default_lang || is_admin()) {
+            return $desc;
+        }
+        echo "xxx _yoast_wpseo_metadesc_{$current_lang}";
+        $translated = get_post_meta($post->ID, "_yoast_wpseo_metadesc_{$current_lang}", true);
+        return !empty($translated) ? $translated : $desc;
+    }
+
+    public function decode_html_entities($text) {
+        $text = preg_replace('/u([0-9a-fA-F]{4})/', '\\\\u$1', $text);
+        $text = json_decode('"' . $text . '"');
+        return html_entity_decode($text);
+    }
+    public function encode_html_entities($text) {
+        $text = json_encode($text, JSON_UNESCAPED_UNICODE);
+        $text = substr($text, 1, -1);
+        $text = preg_replace('/\\\\\\\\u([0-9a-fA-F]{4})/', '\\\\u$1', $text);
+        return $text;
+    }
+
+    public function cleanHTML(string $html): array {
+        // Düz metin kontrolü
+        if (strip_tags($html) === $html) {
+            return [
+                'segments' => [trim($html)],
+                'document' => null,
+                'text_nodes' => null,
+                'plain' => true,
+            ];
+        }
+
+        // HTML parse et
+        $doc = new \DOMDocument();
+        libxml_use_internal_errors(true);
+        $doc->loadHTML(mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
+        libxml_clear_errors();
+
+        $xpath = new \DOMXPath($doc);
+        $text_nodes = $xpath->query('//text()[normalize-space()]');
+
+        $segments = [];
+
+        foreach ($text_nodes as $node) {
+            $text = trim($node->nodeValue);
+
+            // 1. Tamamen boş ya da sadece &nbsp; gibi karakterlerse atla
+            if ($text === '' || preg_match('/^\x{00A0}+$/u', $text)) {
+                continue;
+            }
+
+            // 2. Shortcode gibi görünüyorsa atla (örn: [shortcode attr='x'])
+            if (preg_match('/^\[.+?\]$/s', $text)) {
+                continue;
+            }
+
+            // 3. E-posta adresleri ya da mailto: içeriyorsa atla
+            if (filter_var($text, FILTER_VALIDATE_EMAIL) || stripos($text, 'mailto:') !== false) {
+                continue;
+            }
+
+            $segments[] = $text;
+        }
+
+        return [
+            'segments' => $segments,
+            'document' => $doc,
+            'text_nodes' => $text_nodes,
+            'plain' => false,
+        ];
+    }
+
+    public function replaceHTML($document, $text_nodes, array $translated_segments, bool $plain = false): string {
+    if ($plain) {
+        return $translated_segments[0] ?? '';
+    }
+
+    $i = 0;
+    foreach ($text_nodes as $node) {
+        $original = trim($node->nodeValue);
+
+        // Aynı filtreleri burada da uygula
+        if (
+            $original === '' ||
+            preg_match('/^\x{00A0}+$/u', $original) || // nbsp
+            preg_match('/^\[.+?\]$/s', $original) || // shortcode
+            filter_var($original, FILTER_VALIDATE_EMAIL) ||
+            stripos($original, 'mailto:') !== false
+        ) {
+            continue;
+        }
+
+        if (isset($translated_segments[$i])) {
+            $node->nodeValue = htmlspecialchars_decode($translated_segments[$i], ENT_QUOTES | ENT_HTML5);
+        }
+
+        $i++;
+    }
+
+    $html = $document->saveHTML();
+
+    // body içinde sarılmışsa sadece içeriği al
+    $body_start = stripos($html, '<body>');
+    $body_end   = stripos($html, '</body>');
+
+    if ($body_start !== false && $body_end !== false) {
+        $body_start += strlen('<body>');
+        return trim(substr($html, $body_start, $body_end - $body_start));
+    }
+
+    return trim($html);
+}
+
+
+
+
 
     //Pro Features
     /*public function get_seo_description($post_id = 0){
