@@ -10,10 +10,10 @@ class Image {
 
     public function __construct($container) {
         $this->container = $container;
+        add_filter('get_post_metadata', [$this, 'frontend_image_alt'], 10, 4);
     }
 
     public function get_image_alt(int $post_id, string $lang = ""){
-
         $meta_key = !empty($lang) ? '_salt_image_alt_'.$lang : "_wp_attachment_image_alt";
         return get_post_meta($post_id, $meta_key, true) ?: null;
     }
@@ -24,6 +24,81 @@ class Image {
         $plugin->log("update_image_alt [".$lang."] : ".$meta_key." -> ".$meta_value);
         update_post_meta($post_id, $meta_key, $meta_value);
     }
+
+    public function frontend_image_alt_v1($value, $object_id, $meta_key, $single) {
+
+        if ($meta_key !== '_wp_attachment_image_alt' || get_post_type($object_id) !== 'attachment') {
+            return $value;
+        }
+
+        $integration = $this->container->get('integration');
+        $default_language = $integration->default_language;
+
+        if(is_admin()){
+            $current_language = $_GET['lang'] ?? null;
+            if (!$current_language) {
+                $current_language = $integration->current_language;
+            }
+        }else{
+            $current_language = $integration->current_language;
+        }
+
+        if ($current_language === $default_language ) {
+            return $value;
+        }
+
+        $original = $value[0] ?? '';
+
+        $translated = $this->get_image_alt($object_id, $current_language);//get_post_meta($object_id, "_salt_image_alt_{$current_language}", true);
+        $translated =  !empty($translated) ? $translated : $original;
+
+        return [$translated];
+    }
+
+    public function frontend_image_alt($value, $object_id, $meta_key, $single) {
+        if ($meta_key !== '_wp_attachment_image_alt' || get_post_type($object_id) !== 'attachment') {
+            return $value;
+        }
+
+        // Sonsuz döngüden koruma
+        static $in_progress = false;
+        if ($in_progress) return $value;
+        $in_progress = true;
+
+        $integration = $this->container->get('integration');
+        $default_language = $integration->default_language;
+
+        // 🧠 Dil belirleme
+        if (is_admin()) {
+            $current_language = $_GET['lang'] ?? null;
+
+            // 👇 Medya ekranında değilsek işlemi atla
+            $screen = function_exists('get_current_screen') ? get_current_screen() : null;
+            if ($screen && !in_array($screen->id, ['attachment', 'upload'])) {
+                $in_progress = false;
+                return $value;
+            }
+
+            if (!$current_language) {
+                $current_language = $integration->current_language;
+            }
+        } else {
+            $current_language = $integration->current_language;
+        }
+
+        if ($current_language === $default_language) {
+            $in_progress = false;
+            return $value;
+        }
+
+        $original = is_array($value) ? ($value[0] ?? '') : $value;
+        $translated = $this->get_image_alt($object_id, $current_language);
+        $translated = !empty($translated) ? $translated : $original;
+
+        $in_progress = false;
+        return [$translated];
+    }
+
 
     public function generate_alt_text($attachments = [], $lang="en"){
         $plugin = $this->container->get("plugin");
@@ -92,7 +167,7 @@ class Image {
                             $plugin->log("Translated Alt [".$lang."]: ".$translated_alt);
                             $this->update_image_alt($image["id"], $translated_alt, $lang);                            
                         }
-                        
+
                     }
 
                 }
@@ -182,13 +257,10 @@ class Image {
             'error' => null
         ];
     }
-
     public function delete_temp_image(string $path): void {
         if (file_exists($path)) {
             @unlink($path);
         }
     }
-
-
 
 }

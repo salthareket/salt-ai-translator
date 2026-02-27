@@ -79,7 +79,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (need_translate > 0) {
                     btns.style.display  = 'block';
                 } else {
-                    btns.style.display  = saltTranslator.settings?.retranslate_existing ? 'block' : 'none';
+                    btns.style.display  = saltTranslator.settings?.retranslate ? 'block' : 'none';
                 }
                 statusText.innerText = msg;
             }

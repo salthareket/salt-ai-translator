@@ -24,6 +24,15 @@ class Integration {
     	$this->current_language = pll_current_language() ?? 'en';
     }
 
+    function is_translatable_post_type($post_type): bool {
+		if (!function_exists('pll_is_translated_post_type')) return false;
+		return pll_is_translated_post_type($post_type);
+	}
+	function is_translatable_taxonomy($taxonomy): bool {
+		if (!function_exists('pll_is_translated_taxonomy')) return false;
+		return pll_is_translated_taxonomy($taxonomy);
+	}
+
 	public function translate_text($text = '', $lang = 'en', $custom_prompt = "") {
 		$translator = $this->container->get('translator');
 		if(!$translator){
@@ -34,30 +43,12 @@ class Integration {
 		}
 
 		$this->container->get("plugin")->log("input: ".$text);
-
-		$parsed = $this->plugin->cleanHTML($text);
-		$this->container->get("plugin")->log("Parsed segments");
-		$this->container->get("plugin")->log($parsed['segments']);
-        $translated_segments = [];
-        foreach ($parsed['segments'] as $segment) {
-            $translated_segments[] = $translator->translate($segment, $lang);
-        }
-        $this->container->get("plugin")->log("Translated_segments");
-        $this->container->get("plugin")->log($translated_segments);
-        $output = $this->plugin->replaceHTML(
-            $parsed['document'],
-            $parsed['text_nodes'],
-            $translated_segments,
-            $parsed['plain']
-        );
-
+        $output = $translator->translate($text, $lang);
         $this->container->get("plugin")->log("output: ".$output);
         $this->container->get("plugin")->log("----------------------------");
-
-        return $output;
-        //return $translator->translate($text, $lang);
+		return $output;
+		/*return $text;*/
     }
-
 
 	public function translate_blocks($post_content = "", $lang = "en") {
 	    if (!is_string($post_content) || trim($post_content) === '') {
@@ -154,11 +145,14 @@ class Integration {
 	        	if (isset($block['attrs']['data']) && is_array($block['attrs']['data'])) {
 	               foreach ($block['attrs']['data'] as $key => $val) {
 	                    $field_key = isset($block['attrs']['data']["_" . $key]) ? $block['attrs']['data']["_" . $key] : null;
+
+	                    $acf_field_object = $this->get_acf_field_object($field_key);
+	                    $field_type = $acf_field_object["type"];
 	                   
 						//if ($field_key && (($plugin->options["seo"]["image_alttext"]["generate"] && $this->should_translate($val)) || !$plugin->options["seo"]["image_alttext"]["generate"])){
 						if ($field_key && $plugin->options["seo"]["image_alttext"]["generate"] && !empty($val)){
-							$acf_field_object = $this->get_acf_field_object($field_key);
-						    $field_type = $acf_field_object["type"];
+							
+						    
                             
                             if($plugin->options["seo"]["image_alttext"]["generate"]){
 							    // 🎯 Alt text gerektiren görselleri yakala
@@ -187,18 +181,27 @@ class Integration {
 					                }
 					            }
                             }
+                        }
 
-				            if(is_numeric($val) || is_array($val) || (isset($acf_field_object["translation"]) && $acf_field_object["translation"] !== 'translate') || $acf_field_object["translation"] == "class"){
+                            $plugin->log($field_type."=".$val);
+                            if(isset($acf_field_object["translations"])){
+                            	$plugin->log("translations:".$acf_field_object["translations"]);
+                            }
+
+				            if(is_numeric($val) || is_array($val) || (isset($acf_field_object["translations"]) && $acf_field_object["translations"] !== 'translate') || $acf_field_object["name"] == "class"){
+				            	continue;
+				            }
+
+				            if((isset($acf_field_object["translations"]) && $acf_field_object["translations"] !== 'translate') || $acf_field_object["name"] == "class"){
 				            	continue;
 				            }
 
 						    if (in_array($field_type, ['text', 'textarea', 'wysiwyg'])) {
 						    	$block['attrs']['data'][$key] = $this->translate_text($val, $lang);
 						    }
-
-						}
 		            } 
 	            }
+	            
 	        }
 
 	        // Core paragraph
@@ -279,19 +282,22 @@ class Integration {
 	    if (strpos($text, '<!-- wp:') !== false && strpos($text, '-->') !== false) return false;
 	    return trim(strip_tags($text)) !== '';
 	}
-	public function translate_acf_fields($post_id = 0, $lang = "en") {
+	public function translate_acf_fields($post_id, $lang = "en") {
+		if (!isset($post_id)) return [];
 	    $fields = get_field_objects($post_id);
 	    $fields = unserialize(serialize($fields)); // deep copy
 	    if (!$fields) return [];
 	    $translated_data = [];
 	    foreach ($fields as $field_key => $field) {
 	        if (strpos($field_key, '_') === 0) continue;
-	        $translated_data[$field_key] = $this->translate_acf_field($field, $field['value'], $lang, $post_id);
+	        $val = $field['value'];
+            $translated = $this->translate_acf_field($field, $val, $lang, $post_id);
+	        $translated_data[$field_key] = $translated;//$this->translate_acf_field($field, $field['value'], $lang, $post_id);
 	    }
 	    return $translated_data;
 	}
-	public function translate_acf_field($field, $value, $lang, $post_id = 0) {
-	    if (!$field || !isset($field['type'])) return $value;
+	public function translate_acf_field($field, $value, $lang, $post_id) {
+	    if (!isset($field) || !isset($field['type']) || !isset($post_id)) return $value;
 
 	    $plugin = $this->container->get("plugin");
 
@@ -338,7 +344,7 @@ class Integration {
 
 	    $default_language = $this->default_language;
 
-		if (in_array($type, ['post_object', 'relationship'])) {
+		/*if (in_array($type, ['post_object', 'relationship'])) {
 		    if (is_array($value)) {
 		        $field_value = array_map(function($id) use ($lang, $default_language) {
 		            $translated_id = pll_get_post($id, $lang);
@@ -357,7 +363,42 @@ class Integration {
 		        $field_value = $translated_id ?: $value;
 		    }
 		    return isset($field_value) ? $field_value : $value;
+		}*/
+		if (in_array($type, ['post_object', 'relationship'])) {
+
+		    $translate_post_if_needed = function($id) use ($lang, $default_language) {
+		        $post_type = get_post_type($id);
+
+		        // 💥 Post type çevirilebilir değilse dokunma
+		        if (!$this->is_translatable_post_type($post_type)) {
+		            return $id;
+		        }
+
+		        // 🔄 Çevrilmiş hali var mı kontrol et
+		        $translated_id = pll_get_post($id, $lang);
+
+		        // ❌ Yoksa default posttan çevir
+		        if (!$translated_id) {
+		            $original_id = pll_get_post($id, $default_language);
+
+		            if ($original_id && $this->is_translatable_post_type(get_post_type($original_id))) {
+		                $translated_id = $this->translate_post($original_id, $lang);
+		            }
+		        }
+
+		        // ❗ Eğer yine de çevrilemediyse, ID'yi olduğu gibi döndür, 0 yazma!
+		        return ($translated_id && is_numeric($translated_id)) ? $translated_id : $id;
+		    };
+
+		    if (is_array($value)) {
+		        $field_value = array_map($translate_post_if_needed, $value);
+		    } else {
+		        $field_value = $translate_post_if_needed($value);
+		    }
+
+		    return $field_value;
 		}
+
 		elseif ($type === 'taxonomy') {
 		    if (is_array($value)) {
 		        $field_value = array_map(function($id) use ($lang, $default_language) {
@@ -436,6 +477,67 @@ class Integration {
 	    // Diğer alan tipleri (değiştirme)
 	    return $value;
 	}
+
+	private function sync_post_taxonomies(int $source_post_id, int $target_post_id, string $lang): void {
+	    $post_type  = get_post_type($source_post_id);
+	    if (!$post_type) return;
+
+	    $taxonomies = get_object_taxonomies($post_type, 'names');
+	    if (empty($taxonomies)) return;
+
+	    foreach ($taxonomies as $tax) {
+	    	if (in_array($tax, ['language', 'post_translations'], true)) {
+	            error_log("SKIPPING Polylang internal taxonomy: " . $tax);
+	            continue;
+	        }
+	        // Çevrilmesini istemediğimiz taxonomy’leri atla (örn: eklenti ayarlarında belirlenenler)
+	        if (!$this->is_translatable_taxonomy($tax) && !apply_filters('salt_ai_polylang_sync_non_translatable_tax', true, $tax, $post_type)) {
+	             continue; // Bu filtre ile çevrilemeyenleri istersen atlayabilirsin
+	        }
+
+	        // Kaynak post’a takılı term’leri al
+	        $src_term_ids = wp_get_object_terms($source_post_id, $tax, ['fields' => 'ids']);
+	        if (is_wp_error($src_term_ids) || empty($src_term_ids)) continue;
+
+	        $dest_ids = [];
+	        foreach ($src_term_ids as $term_id) {
+	            $term_id = (int) $term_id;
+	            $translated_id = 0;
+
+	            // 1. Polylang'de bu term'in hedef dildeki çevirisini bulmayı dene
+	            if (function_exists('pll_get_term')) {
+	                // pll_get_term, çevrilebilir olmayanlar için bile aynı ID'yi döndürür (Polylang'in mantığı)
+	                $translated_id = pll_get_term($term_id, $lang);
+	            }
+
+	            // 2. Çevrilmiş term yoksa ve taxonomy çevrilebilir ise yeni termi oluştur
+	            if (!$translated_id && $this->is_translatable_taxonomy($tax)) {
+	                $term = get_term($term_id, $tax);
+	                if ($term && !is_wp_error($term)) {
+	                    // Bu metod, termi çevirip oluşturmalı ve yeni ID'yi döndürmeli
+	                    $new_term_id = $this->translate_term($term_id, $tax, $lang);
+	                    if ($new_term_id) {
+	                        $translated_id = (int) $new_term_id;
+	                    }
+
+	                }
+	            }
+	            if ($translated_id) {
+	                $dest_ids[] = (int) $translated_id;
+	            } else {
+	                if (!$this->is_translatable_taxonomy($tax)) {
+	                    $dest_ids[] = $term_id;
+	                }
+	            }
+	        }
+
+	        $dest_ids = array_values(array_unique(array_filter($dest_ids)));
+	        if (!empty($dest_ids)) {
+	            wp_set_object_terms($target_post_id, $dest_ids, $tax, false);
+	        }
+	    }
+	}
+
 	public function get_acf_field_object($field_key) {
 	    if (!is_string($field_key) || strpos($field_key, 'field_') !== 0) {
 	        return null;
@@ -469,9 +571,15 @@ class Integration {
 	    }
 	}
 
+	public function translate_post($post_id, $lang = "en"){
 
+		if (!isset($post_id)) return null;
 
-	public function translate_post($post_id = 0, $lang = "en"){
+		$post_type = get_post_type($post_id);
+
+	    if (!$this->is_translatable_post_type($post_type)) {
+		    return $post_id;
+		}
 
 		$GLOBALS['salt_ai_doing_translate'] = true;
 
@@ -479,7 +587,6 @@ class Integration {
 		$options = $plugin->options;
         
 		$source_lang = pll_get_post_language($post_id);
-
 		if($source_lang != $this->default_language){
             $post_id = pll_get_post($post_id, $this->default_language);
 	    }
@@ -490,21 +597,21 @@ class Integration {
 	    	if(!$lang_post_id){
 	    		$GLOBALS['salt_ai_doing_translate'] = false;
 	    		return 0;
-	    	} 
+	    	}
 	    	pll_set_post_language($lang_post_id, $lang);
 		    $translations = pll_get_post_translations( $post_id );
             $translations[ $lang ] = $lang_post_id;
             pll_save_post_translations( $translations );
 	    }
 
-	    $post = get_post($post_id);
+	    $post_default = get_post($post_id);
 
-	    if (!$post || $post->post_status === 'trash') {
+	    if (!$post_default || $post_default->post_status === 'trash') {
 	    	$GLOBALS['salt_ai_doing_translate'] = false;
 		    return 0;
 		}
 
-		$prompt_title = "You are translating a string that will be used as a **web page title**. The page represents a WordPress post of the post type: '{$post->post_type}'.
+		$prompt_title = "You are translating a string that will be used as a **web page title**. The page represents a WordPress post of the post type: '{$post_default->post_type}'.
 		Please follow these rules:
 		- This is not just a word or sentence — it is the official **title of a page**, often seen in browser tabs, menus, or SEO titles.
 		- Translate it **contextually** to sound natural and professional in the target language.
@@ -512,23 +619,23 @@ class Integration {
 		- Keep it **short and meaningful**, avoid unnecessary filler words.
 		- Do not include any formatting, tags, or symbols.";
 
-	    $title = $this->translate_text($post->post_title, $lang, $prompt_title);
+	    $title = $this->translate_text($post_default->post_title, $lang, $prompt_title);
 	    $title = $plugin->sanitize_translated_string($title);
 
-        $content_changed = $plugin->is_content_changed($post);
+        $content_changed = $this->is_post_content_changed($post_default);
 
-	    if (has_blocks($post->post_content)) {
-	        $content = $this->translate_blocks($post->post_content, $lang);
+	    if (has_blocks($post_default->post_content)) {
+	        $content = $this->translate_blocks($post_default->post_content, $lang);
 	    }else{
 	        if($plugin->options["seo"]["image_alttext"]["generate"]){
-		        $this->extract_images_from_html($post->post_content);
+		        $this->extract_images_from_html($post_default->post_content);
 		    }
-	        $content = $this->translate_text($post->post_content, $lang);
+	        $content = $this->translate_text($post_default->post_content, $lang);
 	    }
 
 	    $excerpt = '';
-		if (post_type_supports($post->post_type, 'excerpt') && $post->post_excerpt) {
-		    $excerpt = $this->translate_text($post->post_excerpt, $lang);
+		if (post_type_supports($post_default->post_type, 'excerpt') && $post_default->post_excerpt) {
+		    $excerpt = $this->translate_text($post_default->post_excerpt, $lang);
 		}
 
 	    $args = [
@@ -540,13 +647,16 @@ class Integration {
 		if(!empty($excerpt)){
 	        $args["post_excerpt"] = $excerpt;
 		}
+
 		wp_update_post($args);
+
+		$this->sync_post_taxonomies($post_id, $lang_post_id, $lang);
 
         $plugin->log($this->attachments); 
 
-        if($post->post_type != "wp_block"){
+        if($post_default->post_type != "wp_block"){
                 
-            $acf_fields = $this->translate_acf_fields($post_id, $lang);
+            $acf_fields = $this->translate_acf_fields($lang_post_id, $lang);
             if (!empty($acf_fields)) {
 				foreach ($acf_fields as $field_key => $field_value) {
 				    update_field($field_key, $field_value, $lang_post_id);
@@ -564,7 +674,7 @@ class Integration {
 			    $seo = $this->container->get('seo');
 		        if($options["translator"] == "openai"){
 				    $description = $seo->generate_seo_description($lang_post_id);
-				    //$plugin->log("Generated meta description for: ".$post->post_title." -> ".$description);  	
+				    //$plugin->log("Generated meta description for: ".$post_default->post_title." -> ".$description);  	
 			    }
 			    if($options["seo"]["meta_desc"]["translate"]){	
 			        if(empty($description)){
@@ -573,7 +683,7 @@ class Integration {
 			        if(!empty($description)){
 		            	$description = $this->translate_text($description, $lang);
 		            	$seo->update_meta_description($lang_post_id, $description);
-		            	//$plugin->log("Translated meta description [".$lang."] for: ".$post->post_title." -> ".$description); 
+		            	//$plugin->log("Translated meta description [".$lang."] for: ".$post_default->post_title." -> ".$description); 
 			        }
 				} 
 		    }
@@ -588,16 +698,15 @@ class Integration {
 
 		return $lang_post_id;
 	}
-	public function translate_term($term_id = 0, $taxonomy = "", $lang = "en") {
+
+	public function translate_term($term_id, $taxonomy = "", $lang = "en") {
+		if (!isset($term_id)) return null;
 		$GLOBALS['salt_ai_doing_translate'] = true;
 
 		$plugin = $this->container->get("plugin");
 		$options = $plugin->options;
 
 		$source_lang = pll_get_term_language($term_id);
-
-
-
 
 		if($source_lang != $this->default_language){
             $term_id = pll_get_term($term_id, $this->default_language);
@@ -609,14 +718,19 @@ class Integration {
 		    return 0;
 		}
 
-		$name = $this->translate_text($term->name, $lang, "These are taxonomy terms from a WordPress site under the '{$taxonomy}' taxonomy. Translate accordingly. Dont add html tags.");
+		$prompt_term_name = "These are taxonomy terms from a WordPress site under the '{$taxonomy}' taxonomy. Translate accordingly. Dont add html tags.";
+		$prompt_term_description = "These are taxonomy terms from a WordPress site under the '{$taxonomy}' taxonomy. Translate accordingly.";
+
+		$name = $this->translate_text($term->name, $lang, $prompt_term_name);
 		$name = $plugin->sanitize_translated_string($name);
-		$description = $this->translate_text($term->description, $lang, "These are taxonomy terms from a WordPress site under the '{$taxonomy}' taxonomy. Translate accordingly.");
+		$description = $this->translate_text($term->description, $lang, $prompt_term_description);
         $slug = sanitize_title($name);
 		$existing_term = get_term_by('slug', $slug, $taxonomy);
 		if ($existing_term && $existing_term->term_id != $term_id) {
 		    $slug .= '-' . $lang;
 		}
+
+		$content_changed = $this->is_term_content_changed($term);
 
 	    $lang_term_id = pll_get_term($term_id, $lang);
 	    if(!$lang_term_id ){
@@ -631,55 +745,6 @@ class Integration {
 			$translations[$lang] = $lang_term_id;
 			pll_save_term_translations($translations);
 	    }
-
-	    
-
-
-
-        /*
-
-		if ($source_lang !== $this->default_language) {
-			$source_term_id = pll_get_term($term_id, $this->default_language);
-			if (!$source_term_id || $source_term_id == $term_id) {
-				$source_term_id = $term_id;
-			}
-		} else {
-			$source_term_id = $term_id;
-		}
-
-		$term = get_term($source_term_id, $taxonomy);
-		if (!$term || is_wp_error($term)) {
-			$GLOBALS['salt_ai_doing_translate'] = false;
-			return 0;
-		}
-
-		$name = $this->translate_text($term->name, $lang, "These are taxonomy terms from a WordPress site under the '{$taxonomy}' taxonomy. Translate accordingly. Dont add html tags.");
-		$name = $plugin->sanitize_translated_string($name);
-		$description = $this->translate_text($term->description, $lang, "These are taxonomy terms from a WordPress site under the '{$taxonomy}' taxonomy. Translate accordingly.");
-
-        $slug = sanitize_title($name);
-		$existing_term = get_term_by('slug', $slug, $taxonomy);
-		if ($existing_term && $existing_term->term_id != $source_term_id) {
-		    $slug .= '-' . $lang;
-		}
-
-		$lang_term_id = pll_get_term($source_term_id, $lang);
-		$plugin->log("lang_term_id : ".$lang_term_id);
-		if (!$lang_term_id || $lang_term_id == $source_term_id) {
-			$plugin->log("Term in (".$lang.") versiyonu yok");
-
-		    $override = ["name" => $name, "slug" => $slug."-".$lang, "description" => $description];
-			$lang_term_id = $plugin->duplicate_term($source_term_id, $override);
-
-			if (!$lang_term_id) {
-				$GLOBALS['salt_ai_doing_translate'] = false;
-				return 0;
-			}
-			pll_set_term_language($lang_term_id, $lang);
-			$translations = pll_get_term_translations($source_term_id);
-			$translations[$lang] = $lang_term_id;
-			pll_save_term_translations($translations);
-		}*/
 
 		if ($plugin->options["seo"]["image_alttext"]["generate"]) {
 			$this->extract_images_from_html($term->description);
@@ -700,7 +765,7 @@ class Integration {
 		if (
 			$options["seo"]["meta_desc"]["generate"]
 			&& (
-				($options["seo"]["meta_desc"]["on_content_changed"] && true) ||
+				($options["seo"]["meta_desc"]["on_content_changed"] && $content_changed) ||
 				!$options["seo"]["meta_desc"]["on_content_changed"]
 			)
 		) {
@@ -737,13 +802,12 @@ class Integration {
 		return $lang_term_id;
 	}
 
-	
 
 	public function get_untranslated_posts($lang_slug = "en", $retranslate = "") {
 	    $options = $this->plugin->options;
 		$excluded_posts = $options['exclude_posts'] ?? [];
 		$excluded_post_types = $options['exclude_post_types'] ?? [];
-		$retranslate = is_bool($retranslate) ? $retranslate : ($options['retranslate_existing'] ?? false);
+		$retranslate = is_bool($retranslate) ? $retranslate : ($options['retranslate'] ?? false);
 
 	    $results = [
 	        "total"           => 0,
@@ -842,7 +906,7 @@ class Integration {
 	    $options = $this->plugin->options;
 	    $excluded_terms = $options['exclude_terms'] ?? [];
 	    $excluded_taxonomies = $options['exclude_taxonomies'] ?? [];
-	    $retranslate = is_bool($retranslate) ? $retranslate : ($options['retranslate_existing'] ?? false);
+	    $retranslate = is_bool($retranslate) ? $retranslate : ($options['retranslate'] ?? false);
 
 	    $results = [
 	        "total"           => 0,
@@ -950,97 +1014,6 @@ class Integration {
 	}
 
 
-	/*public function translate_menu($lang = 'en', $retranslate = false) {
-		if ($lang === $this->default_language) return;
-
-		$results = [
-			"status" => true,
-			"status_text" => __("Menu created and translated...", "salt-ai-translator")
-		];
-
-		$menu_ids = [];
-		$theme = wp_get_theme();
-		$textdomain = $theme->get('TextDomain');
-		$polylang_options = get_option('polylang');
-		$polylang_menus = $polylang_options['nav_menus'][$textdomain] ?? [];
-		$locations = get_nav_menu_locations();
-
-		foreach ($locations as $location => $menu_id) {
-			if (!isset($polylang_menus[$location])) {
-				continue;
-			}
-
-			$menu_data = $polylang_menus[$location];
-			$original_menu_id = $menu_data[$this->default_language] ?? 0;
-
-			if (!$original_menu_id || in_array($original_menu_id, $menu_ids)) {
-				continue;
-			}
-			$menu_ids[] = $original_menu_id;
-
-			$menu_obj = wp_get_nav_menu_object($original_menu_id);
-			$menu_items = wp_get_nav_menu_items($original_menu_id);
-			$menu_name = $location . '-' . $lang;
-
-			$existing_menu = get_term_by('name', $menu_name, 'nav_menu');
-
-			if ($existing_menu && $retranslate) {
-				wp_delete_nav_menu($existing_menu->term_id);
-				$existing_menu = false;
-			}
-
-			$translated_menu_id = $existing_menu ? $existing_menu->term_id : wp_create_nav_menu($menu_name);
-
-			if (is_wp_error($translated_menu_id)) {
-				$results["status"] = false;
-				$results["status_text"] = __("Failed to create menu: ", "salt-ai-translator") . $translated_menu_id->get_error_message();
-				continue;
-			}
-
-			$item_id_map = [];
-
-			foreach ($menu_items as $item) {
-				$args = [
-					'menu-item-title'     => $this->translate_text($item->title, $lang, "Always translate everything."),
-					'menu-item-url'       => '',
-					'menu-item-type'      => $item->type,
-					'menu-item-object'    => $item->object,
-					'menu-item-object-id' => $item->object_id,
-					'menu-item-status'    => 'publish',
-				];
-
-				if ($item->type === 'custom') {
-					$args['menu-item-url'] = $item->url;
-				} elseif (in_array($item->type, ['post_type', 'taxonomy'])) {
-					$args['menu-item-object-id'] = $this->get_or_create_translation($item->object, $item->object_id, $lang);
-				}
-
-				if ($item->menu_item_parent && isset($item_id_map[$item->menu_item_parent])) {
-					$args['menu-item-parent-id'] = $item_id_map[$item->menu_item_parent];
-				}
-
-				$new_item_id = wp_update_nav_menu_item($translated_menu_id, 0, $args);
-				$item_id_map[$item->ID] = $new_item_id;
-			}
-
-			$locations[$location] = $translated_menu_id;
-			$update_locations = $this->get_menu_locations($polylang_menus);
-
-			foreach ($update_locations as $update_location) {
-				$polylang_options['nav_menus'][$textdomain][$update_location][$lang] = $translated_menu_id;
-			}
-		}
-
-		if (!$menu_ids) {
-			$results["status_text"] = __("No menus found.", "salt-ai-translator");
-		}
-
-		set_theme_mod('nav_menu_locations', $locations);
-		update_option('polylang', $polylang_options);
-
-		return $results;
-	}*/
-	
 	private function get_menu_locations($polylang_menus){
 		$locations = [];
 		foreach ($polylang_menus as $location => $languages) {
@@ -1186,8 +1159,6 @@ class Integration {
 
 
 
-
-
 	private function extract_cf7_strings($text) {
 	    if (!is_string($text)) return [];
 	    preg_match_all('/\{([^\{\}]+)\}/', $text, $matches);
@@ -1309,6 +1280,24 @@ class Integration {
 
 
 
+    public function is_term_content_changed($term){
+        $current_hash = md5(trim($term->name." ".$term->description));
+        $previous_hash = get_term_meta($term->term_id, '_salt_translate_content_hash', true);
+        if ($current_hash !== $previous_hash) {
+            return update_term_meta($term->term_id, '_salt_translate_content_hash', $current_hash);
+        }
+        return false;
+    }
+    public function is_post_content_changed($post){
+        $current_hash = md5($post->post_content);
+        $previous_hash = get_post_meta($post->ID, '_salt_translate_content_hash', true);
+        if ($current_hash !== $previous_hash) {
+            return update_post_meta($post->ID, '_salt_translate_content_hash', $current_hash);
+        }
+        return false;
+    }
+
+
 
     public function get_languages($ignore_default = true){
 	    $languages = [];
@@ -1323,6 +1312,24 @@ class Integration {
     public function get_language_label($lang="en") {
 	    return $this->get_languages()[$lang];
 	}
+	public function unpublish_languages($languages = []) {
+	    if (empty($languages)) {
+	        return;
+	    }
+	    add_filter('pll_the_languages', function($langs, $args) use ($languages) {
+	        if (is_array($langs)) {
+	            foreach ($languages as $lang) {
+	                if (isset($langs[$lang])) {
+	                    unset($langs[$lang]); // Seçili dili kaldır
+	                }
+	            }
+	        }
+	        return $langs;
+	    }, 10, 2);
+	}
+
+
+
     
     public function is_media_translation_enabled() {
 	    $options = get_option('polylang');

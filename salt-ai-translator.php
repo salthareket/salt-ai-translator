@@ -2,12 +2,22 @@
 
 use SaltAI\Core\ServiceContainer;
 
+use PhpOffice\PhpWord\PhpWord;
+use PhpOffice\PhpWord\IOFactory as WordIO;
+use PhpOffice\PhpSpreadsheet\Spreadsheet;
+use PhpOffice\PhpSpreadsheet\IOFactory as ExcelIO;
+use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
+use PhpOffice\PhpSpreadsheet\Style\Fill;
+use PhpOffice\PhpSpreadsheet\RichText\RichText;
+use PhpOffice\PhpSpreadsheet\RichText\Run;
+
 /**
  * Plugin Name: Salt AI Translator
  * Text Domain: salt-ai-translator
  * Description: Otomatik çok dilli çeviri sistemi. OpenAI, DeepL vb. destekler.
- * Version: 1.0.0
+ * Version: 1.0.2
  * Author: Tolga Koçak
+ * Domain Path: /languages
  */
 
 if (!defined('ABSPATH')) exit;
@@ -15,6 +25,10 @@ if (!defined('ABSPATH')) exit;
 define('SALT_AI_TRANSLATOR_PREFIX', 'salt_ai_translator');
 define('SALT_AI_TRANSLATOR_DIR', plugin_dir_path(__FILE__));
 define('SALT_AI_TRANSLATOR_URL', plugin_dir_url(__FILE__));
+
+if ( file_exists( __DIR__ . '/vendor/autoload.php' ) ) {
+    require __DIR__ . '/vendor/autoload.php';
+}
 
 class Salt_AI_Translator_Plugin {
 
@@ -121,8 +135,10 @@ class Salt_AI_Translator_Plugin {
         add_action('admin_init', [$this, 'register_settings']);
         add_action('init', [$this, 'load_textdomain']);
 
-         add_action('plugins_loaded', [$this, 'initialize_services']);
-         //add_action('init', [$this, 'initialize_services']);
+        //add_action('plugins_loaded', [$this, 'initialize_services']);
+        add_action('init', [$this, 'initialize_services']);
+        add_action('init', [$this, 'unpublish_languages']);
+
 
         add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
 
@@ -136,10 +152,16 @@ class Salt_AI_Translator_Plugin {
 
         add_action('wp_ajax_translate_menu', [$this, 'translate_menu']);
         add_action('wp_ajax_translate_strings', [$this, 'translate_strings']);
+        add_action('wp_ajax_translate_post_type_taxonomy', [$this, 'translate_post_type_taxonomy']);
 
         add_action('wp_ajax_salt_autocomplete_posts', [$this, 'autocomplete_posts']);
         add_action('wp_ajax_salt_autocomplete_terms', [$this, 'autocomplete_terms']);
 
+        add_action('wp_ajax_get_sitemap_urls', [$this, 'get_sitemap_urls']);
+        add_action('wp_ajax_get_translations_by_url', [$this, 'get_translations_by_url']);
+        add_action('wp_ajax_export_translations_download', [$this, 'export_translations_download']);
+        add_action('wp_ajax_export_translations_download_cache', [$this, 'export_translations_download_cache']);
+        
         add_action('add_meta_boxes', [$this, 'add_translate_post_meta_box']);
         add_action('wp_ajax_salt_translate_post_manual_ajax', [$this, 'handle_translate_post_meta_box_ajax']);
         
@@ -147,7 +169,7 @@ class Salt_AI_Translator_Plugin {
         add_action('wp_ajax_salt_translate_term_manual_ajax', [$this, 'handle_translate_term_meta_box_ajax']);
 
         add_action('admin_head', function () {
-            $pages = ["salt-ai-translator", 'salt-ai-translator-posts', 'salt-ai-translator-terms', 'salt-ai-translator-others' ];
+            $pages = ["salt-ai-translator", 'salt-ai-translator-posts', 'salt-ai-translator-terms', 'salt-ai-translator-others', 'salt-ai-translator-export' ];
             if (isset($_GET['page']) && in_array($_GET['page'], $pages)) {
                 remove_all_actions('admin_notices');
                 remove_all_actions('all_admin_notices');
@@ -161,13 +183,16 @@ class Salt_AI_Translator_Plugin {
             'translator'           => '',
             'prompt'               => '',
             'model'                => '',
-            'temperature'          => '0.3',
-            'retranslate_existing' => 0,
+            'temperature'          => '0.2',
+            'retranslate' => 0,
             'auto_translate'       => 0,
             'exclude_post_types'   => [],
             'exclude_taxonomies'   => [],
             'exclude_posts'        => [],
             'exclude_terms'        => [],
+            'display' => [
+                "unpublished_languages" => []
+            ],
             'seo' => [
                 "meta_desc" => [
                     "generate" => 0,
@@ -191,10 +216,10 @@ class Salt_AI_Translator_Plugin {
                 ],
             ],
             'menu' => [
-                'retranslate' => false
+                'retranslate' => 0
             ],
             'strings' => [
-                'retranslate' => false
+                'retranslate' => 0
             ],
             'keys' => [
                 'pending'   => '_salt_translate_pending',
@@ -209,6 +234,10 @@ class Salt_AI_Translator_Plugin {
 
     public function initialize_services() {
 
+        if (!function_exists('is_plugin_active')) {
+            require_once ABSPATH . 'wp-admin/includes/plugin.php';
+        }
+
         if (!isset($this->container)) {
             return;
         }
@@ -219,6 +248,7 @@ class Salt_AI_Translator_Plugin {
         /**
          * 1. ML Plugin (Polylang / qTranslate XT)
          */
+
         foreach ($this->supported_ml_plugins as $plugin_slug => $plugin_data) {
             if (is_plugin_active($plugin_slug)) {
                 $this->ml_plugin = $plugin_data;
@@ -234,7 +264,7 @@ class Salt_AI_Translator_Plugin {
                         }
 
                         if($this->options["auto_translate"]){
-                            add_action('save_post', [ $this, 'autotranslate_post'], 8, 3);
+                            add_action('save_post', [ $this, 'autotranslate_post'], 90, 3);
                         }
                     }
                 }
@@ -310,6 +340,12 @@ class Salt_AI_Translator_Plugin {
             }
         }, 20);
     }
+    public function unpublish_languages(){
+        if (!is_admin() && (!is_user_logged_in() || (is_user_logged_in() && !current_user_can('manage_options')))) {
+            $languages = $this->options["display"]["unpublished_languages"];
+            $this->container->get('integration')->unpublish_languages($languages);
+        }
+    }
 
     public function admin_menu() {
         add_menu_page('Salt AI Translator', 'Salt AI Translator', 'manage_options', 'salt-ai-translator', [$this, 'settings_page'], 'dashicons-translation', 56);
@@ -317,6 +353,7 @@ class Salt_AI_Translator_Plugin {
         add_submenu_page('salt-ai-translator', 'Terms', 'Terms', 'manage_options', 'salt-ai-translator-terms', [$this, 'terms_page']);
         add_submenu_page('salt-ai-translator', 'Others', 'Others', 'manage_options', 'salt-ai-translator-others', [$this, 'others_page']);
         add_submenu_page('salt-ai-translator', 'SEO', 'SEO', 'manage_options', 'salt-ai-translator-seo', [$this, 'seo_page']);
+        add_submenu_page('salt-ai-translator', 'Export', 'Export', 'manage_options', 'salt-ai-translator-export', [$this, 'export_page']);
     }
 
     public function register_settings() {
@@ -347,12 +384,13 @@ class Salt_AI_Translator_Plugin {
             $existing['temperature'] = $input['temperature'] ?? '';
         }
 
-        $existing['retranslate_existing'] = isset($input['retranslate_existing']) ? 1 : 0;
+        $existing['retranslate'] = isset($input['retranslate']) ? 1 : 0;
         $existing['auto_translate'] = isset($input['auto_translate']) ? 1 : 0;
         $existing['exclude_post_types'] = $input['exclude_post_types'] ?? [];
         $existing['exclude_taxonomies'] = $input['exclude_taxonomies'] ?? [];
         $existing['exclude_posts'] = array_filter(array_map('intval', $input['exclude_posts'] ?? []));
         $existing['exclude_terms'] = array_filter(array_map('intval', $input['exclude_terms'] ?? []));
+        $existing['display']['unpublished_languages'] = $input['display']['unpublished_languages'] ?? [];
 
         if (isset($input['seo']['meta_desc'])) {
             $existing['seo']['meta_desc']['on_content_changed'] = isset($input['seo']['meta_desc']['on_content_changed']) ? 1 : 0;
@@ -362,7 +400,8 @@ class Salt_AI_Translator_Plugin {
             $existing['seo']['meta_desc']['preserve'] = isset($input['seo']['meta_desc']['preserve']) ? 1 : 0;
             $existing['seo']['meta_desc']['prompt'] = isset($input['seo']['meta_desc']['prompt']) ? $input['seo']['meta_desc']['prompt'] : "";
             $existing['seo']['meta_desc']['model'] = isset($input['seo']['meta_desc']['model']) ? $input['seo']['meta_desc']['model'] : "";
-            $existing['seo']['meta_desc']['temperature'] = isset($input['seo']['meta_desc']['model']) ? $input['seo']['meta_desc']['temperature'] : "";
+            //$existing['seo']['meta_desc']['temperature'] = isset($input['seo']['meta_desc']['model']) ? $input['seo']['meta_desc']['temperature'] : "";
+            $existing['seo']['meta_desc']['temperature'] = isset($input['seo']['meta_desc']['temperature']) ? $input['seo']['meta_desc']['temperature'] : "";
         }
         if (isset($input['seo']['image_alttext'])) {
             $existing["seo"]["image_alttext"]['image_size'] = isset($input['seo']['image_alttext']['image_size']) ? $input['seo']['image_alttext']['image_size'] : "medium";
@@ -372,7 +411,8 @@ class Salt_AI_Translator_Plugin {
             $existing['seo']['image_alttext']['preserve'] = isset($input['seo']['image_alttext']['preserve']) ? 1 : 0;
             $existing['seo']['image_alttext']['prompt'] = isset($input['seo']['image_alttext']['prompt']) ? $input['seo']['image_alttext']['prompt'] : "";
             $existing['seo']['image_alttext']['model'] = isset($input['seo']['image_alttext']['model']) ? $input['seo']['image_alttext']['model'] : "";
-            $existing['seo']['image_alttext']['temperature'] = isset($input['seo']['image_alttext']['model']) ? $input['seo']['image_alttext']['temperature'] : "";
+            //$existing['seo']['image_alttext']['temperature'] = isset($input['seo']['image_alttext']['model']) ? $input['seo']['image_alttext']['temperature'] : "";
+            $existing['seo']['image_alttext']['temperature'] = isset($input['seo']['image_alttext']['temperature']) ? $input['seo']['image_alttext']['temperature'] : "";
         }
         if (isset($input['menu'])) {
             $existing['menu']['retranslate'] = isset($input['menu']['retranslate']) ? 1 : 0;
@@ -393,7 +433,7 @@ class Salt_AI_Translator_Plugin {
                 'ajax_url' => admin_url('admin-ajax.php'),
                 'nonce'    => wp_create_nonce('salt_translate_post_manual_ajax')
             ]);
-            wp_set_script_translations('salt-ai-translator-admin', 'salt-ai-translator');
+            wp_set_script_translations('salt-ai-translator-admin', 'salt-ai-translator', plugin_dir_path(__FILE__) . 'languages');
         }
 
 
@@ -403,7 +443,7 @@ class Salt_AI_Translator_Plugin {
                 'ajax_url' => admin_url('admin-ajax.php'),
                 'nonce'    => wp_create_nonce('salt_translate_term_manual_ajax')
             ]);
-            wp_set_script_translations('salt-ai-translator-admin', 'salt-ai-translator');
+            wp_set_script_translations('salt-ai-translator-admin', 'salt-ai-translator', plugin_dir_path(__FILE__) . 'languages');
         }
 
         //wp_enqueue_style('salt-ai-translator-bootstrap', 'https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css');
@@ -419,7 +459,7 @@ class Salt_AI_Translator_Plugin {
             wp_enqueue_style('select2-css', 'https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/css/select2.min.css');
             wp_enqueue_script('select2-js', 'https://cdn.jsdelivr.net/npm/select2@4.1.0-rc.0/dist/js/select2.min.js', ['jquery'], null, true);
             wp_enqueue_script('salt-ai-translator-admin', SALT_AI_TRANSLATOR_URL . 'js/admin.js', ['wp-i18n'], false, true);
-            wp_set_script_translations('salt-ai-translator-admin', 'salt-ai-translator');
+            wp_set_script_translations('salt-ai-translator-admin', 'salt-ai-translator', plugin_dir_path(__FILE__) . 'languages');
             wp_add_inline_script('salt-ai-translator-admin', file_get_contents(SALT_AI_TRANSLATOR_DIR . 'js/admin-dynamic.js'));
             wp_add_inline_script('salt-ai-translator-admin', 'window.saltTranslatorKeys = ' . json_encode($api_keys) . ';', 'before');
             wp_localize_script('salt-ai-translator-admin', 'saltTranslator', [
@@ -441,7 +481,7 @@ class Salt_AI_Translator_Plugin {
                 'settings'  => $this->options,
                 'queue' => $this->container->get("manager")->check_process_queue("post")
             ]);
-            wp_set_script_translations('salt-ai-translator-posts', 'salt-ai-translator');
+            wp_set_script_translations('salt-ai-translator-posts', 'salt-ai-translator', plugin_dir_path(__FILE__) . 'languages');
         }
 
         if ($hook === 'salt-ai-translator_page_salt-ai-translator-terms') {
@@ -450,7 +490,7 @@ class Salt_AI_Translator_Plugin {
                 'nonce' => wp_create_nonce('salt_ai_translator_nonce'),
                 'settings'  => $this->options
             ]);
-            wp_set_script_translations('salt-ai-translator-terms', 'salt-ai-translator');
+            wp_set_script_translations('salt-ai-translator-terms', 'salt-ai-translator', plugin_dir_path(__FILE__) . 'languages');
         }
 
         if ($hook === 'salt-ai-translator_page_salt-ai-translator-others') {
@@ -459,7 +499,15 @@ class Salt_AI_Translator_Plugin {
                 'nonce' => wp_create_nonce('salt_ai_translator_nonce'),
                 'settings'  => $this->options,
             ]);
-            wp_set_script_translations('salt-ai-translator-others', 'salt-ai-translator');
+            wp_set_script_translations('salt-ai-translator-others', 'salt-ai-translator', plugin_dir_path(__FILE__) . 'languages');
+        }
+        if ($hook === 'salt-ai-translator_page_salt-ai-translator-export') {
+            wp_enqueue_script('salt-ai-translator-export', SALT_AI_TRANSLATOR_URL . 'js/export.js', ['wp-i18n'], false, true);
+            wp_localize_script('salt-ai-translator-export', 'saltTranslator', [
+                'nonce' => wp_create_nonce('salt_ai_translator_nonce'),
+                'settings'  => $this->options,
+            ]);
+            wp_set_script_translations('salt-ai-translator-export', 'salt-ai-translator', plugin_dir_path(__FILE__) . 'languages');
         }
     }
     
@@ -476,7 +524,7 @@ class Salt_AI_Translator_Plugin {
             }
             add_meta_box(
                 'salt_translate_meta_box',
-                __('Salt Translate', 'salt-ai'),
+                __('Salt Translate', 'salt-ai-translator'),
                 [$this, 'render_post_translate_meta_box'],
                 $screen,
                 'side',
@@ -485,23 +533,43 @@ class Salt_AI_Translator_Plugin {
         }
     }
     public function render_post_translate_meta_box($post) {
+        $integration = $this->container->get('integration');
         $excluded_posts = $this->options['exclude_posts'] ?? [];
-        if (in_array($post->ID, $excluded_posts, true)) return;
+
+        $is_excluded = in_array($post->ID, $excluded_posts, true);
+        $is_translatable = $integration->is_translatable_post_type($post->post_type);
+
+        if (!$is_translatable || $is_excluded) {
+            echo '<p style="margin:0;">';
+
+            if (!$is_translatable) {
+                echo esc_html__('Translation is not enabled for this post type.', 'salt-ai-translator') . '<br>';
+                echo sprintf(
+                    esc_html__('You can enable it from the %s settings.', 'salt-ai-translator'),
+                    esc_html($this->ml_plugin['name'])
+                );
+            } elseif ($is_excluded) {
+                echo esc_html__('This post is excluded from translation.', 'salt-ai-translator');
+            }
+
+            echo '</p>';
+            return;
+        }
 
         wp_nonce_field('salt_translate_post_manual_ajax', 'salt_translate_manual_nonce');
-        
+
         echo '<select id="salt_translate_lang_' . $post->ID . '" class="salt-translate-lang widefat">';
-        echo ' <option value="">'. __('Select a language to translate', 'salt-ai-translator').'</option>';
+        echo ' <option value="">'. __('Select a language to translate', 'salt-ai-translator') .'</option>';
         foreach ($this->languages as $code => $label) {
             echo "<option value=\"$code\">$label</option>";
         }
         echo '</select><br><br>';
 
         if (($this->options['translator'] ?? '') === 'openai') {
-            echo '<textarea id="salt_translate_prompt_' . $post->ID . '" class="widefat" rows="3" placeholder="'.__("Custom Prompt", "salt-ai-translator").' ('. __("Optional", "salt-ai-translator").')"></textarea><br>';
+            echo '<textarea id="salt_translate_prompt_' . $post->ID . '" class="widefat" rows="3" placeholder="' . __("Custom Prompt", "salt-ai-translator") . ' (' . __("Optional", "salt-ai-translator") . ')"></textarea><br>';
         }
 
-        echo '<button type="button" class="button button-primary salt-translate-manual-submit mt-3" data-post-id="' . $post->ID . '">'.__("Translate", "salt-ai-translator").'</button>';
+        echo '<button type="button" class="button button-primary salt-translate-manual-submit mt-3" data-post-id="' . $post->ID . '">'. __("Translate", "salt-ai-translator") .'</button>';
         echo '<div class="salt-translate-response" style="margin-top: 10px;"></div>';
     }
     public function handle_translate_post_meta_box_ajax() {
@@ -543,11 +611,13 @@ class Salt_AI_Translator_Plugin {
         add_action('admin_enqueue_scripts', [$this, 'enqueue_assets']);
     }
     public function render_translate_term_meta_box($term, $taxonomy) {
+        $integration = $this->container->get('integration');
+
         $excluded_terms = $this->options['exclude_terms'] ?? [];
         $excluded_taxonomies = $this->options['exclude_taxonomies'] ?? [];
 
-        if (in_array($term->term_id, $excluded_terms, true)) return;
-        if (in_array($taxonomy, $excluded_taxonomies, true)) return;
+        $is_excluded = in_array($term->term_id, $excluded_terms, true);
+        $is_translatable = $integration->is_translatable_taxonomy($taxonomy);
 
         $languages = $this->languages ?? [];
         $translator = $this->options['translator'] ?? '';
@@ -557,6 +627,23 @@ class Salt_AI_Translator_Plugin {
         echo '<div class="postbox" style="margin-top:20px;">';
             echo '<div class="postbox-header"><h2 class="handle"><span>Salt Translate</span></h2></div>';
             echo '<div class="inside">';
+
+            if (!$is_translatable || $is_excluded) {
+
+                echo '<p style="margin:0;">';
+                if (!$is_translatable) {
+                    echo esc_html__('Translation is not enabled for this post type.', 'salt-ai-translator') . '<br>';
+                    echo sprintf(
+                        esc_html__('You can enable it from the %s settings.', 'salt-ai-translator'),
+                        esc_html($this->ml_plugin['name'])
+                    );
+                } elseif ($is_excluded) {
+                    echo esc_html__('This post is excluded from translation.', 'salt-ai-translator');
+                }
+                echo '</p>';
+
+            }else{
+
                 echo '<select name="salt_translate_lang" class="salt-translate-lang widefat">';
                 echo '<option value="">'. __('Select a language to translate', 'salt-ai-translator').'</option>';
                 foreach ($this->languages as $code => $label) {
@@ -568,7 +655,10 @@ class Salt_AI_Translator_Plugin {
                     echo '<textarea name="salt_translate_prompt" class="widefat" rows="3" placeholder="'.__("Custom Prompt", "salt-ai-translator").' ('. __("Optional", "salt-ai-translator").')"></textarea><br>';
                 }
 
-                echo '<button type="button" class="button button-primary salt-translate-manual-submit mt-3" data-term-id="' . $term->term_id . '" data-taxonomy="' . esc_attr($taxonomy) . '">'.__("Translate", "salt-ai-translator").'</button>';
+                echo '<button type="button" class="button button-primary salt-translate-manual-submit mt-3" data-term-id="' . $term->term_id . '" data-taxonomy="' . esc_attr($taxonomy) . '">'.__("Translate", "salt-ai-translator").'</button>';    
+                            
+            }
+
             echo '</div>';
         echo '</div>';
     }
@@ -612,16 +702,36 @@ class Salt_AI_Translator_Plugin {
     }
     public function seo_page(){
     }
+    public function export_page() {
+        include SALT_AI_TRANSLATOR_DIR . 'admin/views/export-ui.php';
+    }
 
 
-    private function render_post_row_html($post_id, $post_id_translated = null) {
+    private function render_post_row_html($post_id, $post_id_translated = null, $lang = "en") {
         $post = get_post($post_id);
         if (!$post) return '';
 
         $thumbnail = get_the_post_thumbnail($post_id, [60, 60]);
-        $post_type = get_post_type($post);
-        $title = get_the_title($post_id);
-        $title_translated = $post_id_translated ? get_the_title($post_id_translated) : '—';
+        $post_type = $post->post_type;
+        if($this->ml_plugin['key'] == "qtranslate-xt"){
+            $integration = $this->container->get('integration');
+            $title = qtranxf_use($integration->default_language, $post->post_title, false, false);
+            $title_translated = qtranxf_use($lang, $post->post_title, false, false);
+            $permalink = get_permalink($post_id);
+            $permalink = qtranxf_convertURL( $permalink, $lang);
+        }
+        if($this->ml_plugin['key'] == "polylang"){
+            $title = $post->post_title;
+            $title_translated = '—';
+            if ($post_id_translated) {
+                $translated = get_post($post_id_translated);
+                if ($translated && !is_wp_error($translated)) {
+                    $title_translated = $translated->post_title;
+                    $permalink = get_permalink((int) $post_id_translated);
+                }
+            }
+        }
+        
 
         ob_start();
         ?>
@@ -629,7 +739,7 @@ class Salt_AI_Translator_Plugin {
             <td style="padding: 6px; vertical-align: middle;width:60px;">
                 <span style="display:inline-block;width:60px;height:60px;background:#eee;text-align:center;line-height:60px;border-radius:12px;overflow:hidden;">
                 <?php 
-                if (!$thumbnail) {
+                if ($thumbnail) {
                    echo $thumbnail;
                 }
                 ?>
@@ -642,18 +752,21 @@ class Salt_AI_Translator_Plugin {
                 <strong style="color:#000;"><?php echo esc_html($title_translated); ?></strong>
             </td>
             <td style="padding: 6px; vertical-align: middle;">
-                <a href="<?php echo esc_url(get_permalink((int) $title_translated)); ?>" class="salt-button salt-primary" target="_blank">Visit</a>
+    
+                <a href="<?php echo esc_url($permalink); ?>" class="salt-button salt-primary" target="_blank">Visit</a>
+
             </td>
         </tr>
         <?php
         return ob_get_clean();
     }
-    private function render_term_row_html($term_id, $term_id_translated = null) {
+    private function render_term_row_html($term_id, $term_id_translated = null, $lang = "en") {
         $term = get_term($term_id);
         if (!$term || is_wp_error($term)) return '';
 
         $taxonomy = $term->taxonomy;
-        $term_name = $term->name;
+        $default_language = $this->container->get('integration')->default_language;
+        $term_name = $this->container->get('integration')->get_term_i18n_value($term, "name", $default_language);
         $term_name_translated = '—';
 
         if ($term_id_translated) {
@@ -678,7 +791,13 @@ class Salt_AI_Translator_Plugin {
                 <strong style="color:#000;"><?php echo esc_html($term_name_translated); ?></strong>
             </td>
             <td style="padding: 6px; vertical-align: middle;">
+                <?php 
+                if ($term_id_translated){ 
+                ?>
                 <a href="<?php echo esc_url(get_term_link((int) $term_id_translated, $taxonomy)); ?>" target="_blank">Visit</a>
+                <?php 
+                }
+                ?>
             </td>
         </tr>
         <?php
@@ -724,7 +843,7 @@ class Salt_AI_Translator_Plugin {
 
         try {
             $post_id_translated = $integration->translate_post($post_id, $lang);
-            $html = $this->render_post_row_html($post_id, $post_id_translated);
+            $html = $this->render_post_row_html($post_id, $post_id_translated, $lang);
             wp_send_json_success(["html" => $html]);
         } catch (Exception $e) {
             wp_send_json_error($e->getMessage());
@@ -741,12 +860,16 @@ class Salt_AI_Translator_Plugin {
         static $already_run = false;
         if ($already_run) return;
         $already_run = true;
+
+        error_log("----------- autotranslate_post");
         
         if (!is_admin()) return;
         if (defined('DOING_AJAX') && DOING_AJAX) return;
         if (defined('DOING_CRON') && DOING_CRON) return;
         if (wp_is_post_revision($post_id)) return;
         if (get_post_status($post_id) !== 'publish') return;
+
+        error_log("----------- autotranslate_post -> start");
 
         $excluded_post_types = $this->container->get("plugin")->options['exclude_post_types'] ?? [];
         $post_types = get_post_types([
@@ -760,12 +883,18 @@ class Salt_AI_Translator_Plugin {
             return function_exists('pll_is_translated_post_type') && pll_is_translated_post_type($post_type);
         });
 
-        if (!in_array($post->post_type, $post_types)) return;
+         error_log("----------- autotranslate_post -> control -> ".$post->post_type." ok:".(in_array($post->post_type, $post_types)));
+
+        if (in_array($post->post_type, $post_types)) return;
+
+        error_log("------- çeviri başlaaar");
 
         $integration = $this->container->get("integration");
         $languages = $integration->get_languages();
+        error_log(print_r($languages, true));
         if($languages){
             foreach($languages as $key => $language){
+                error_log("integration->translate_post(".$post_id.", ".$key.");");
                 $integration->translate_post($post_id, $key);
             }
         }
@@ -826,7 +955,9 @@ class Salt_AI_Translator_Plugin {
 
         try {
             $term_id_translated = $integration->translate_term($term_id, $taxonomy, $lang);
-            $html = $this->render_term_row_html($term_id, $term_id_translated);
+            error_log($term_id.", ".$taxonomy.", ".$lang);
+            error_log("term_id_translated:".$term_id_translated);
+            $html = $this->render_term_row_html($term_id, $term_id_translated, $lang);
             wp_send_json_success(["html" => $html]);
         } catch (Exception $e) {
             wp_send_json_error($e->getMessage());
@@ -909,6 +1040,8 @@ class Salt_AI_Translator_Plugin {
         wp_send_json_success($terms);
     }
 
+
+
     public function translate_menu() {
         $lang = sanitize_text_field($_POST['lang'] ?? '');
         $retranslate = sanitize_text_field($_POST['retranslate'] ?? 0);
@@ -943,7 +1076,400 @@ class Salt_AI_Translator_Plugin {
         $data = $integration->translate_strings($lang, $retranslate); 
         wp_send_json_success($data);
     }
+    public function translate_post_type_taxonomy() {
+        $lang = sanitize_text_field($_POST['lang'] ?? '');
 
+        $integration = $this->container->get('integration');
+
+        if (!$integration || !$lang) {
+            wp_send_json_error('Translator veya dil seçimi eksik.');
+        }
+
+        if (!method_exists($integration, 'translate_post_type_taxonomy')) {
+            wp_send_json_error('Yöntem mevcut değil.');
+        }
+
+        $data = $integration->translate_post_type_taxonomy($lang); 
+        wp_send_json_success($data);
+    }   
+
+
+    public function get_sitemap_urls(){
+        $integration = $this->container->get('integration');
+        $lang_source = sanitize_text_field($_POST['lang_source'] ?? '');
+        $lang = sanitize_text_field($_POST['lang'] ?? '');
+        $format = sanitize_text_field($_POST['format'] ?? '');
+
+        //$integration = $this->container->get('integration');
+        $seo = $this->container->get('seo');
+
+        if (!$seo || !$lang || !$format) {
+            wp_send_json_error('Translator veya dil seçimi eksik.');
+        }
+
+        if (!method_exists($seo, 'get_sitemap_urls')) {
+            wp_send_json_error('Yöntem mevcut değil.');
+        }
+
+        $urls = $seo->get_sitemap_urls();
+        $total = count($urls);
+        $status_text = sprintf(
+            __('The translations of the pages belonging to "%1$s" URL will be generated in %3$s format for the "%2$s" language.', 'salt-ai-translator'),
+            $total,
+            $integration->get_language_label($lang),
+            $format
+        );
+        $results = [
+            "total" => $total,
+            "status_text" => $status_text,
+            "posts" => $urls
+        ];
+        wp_send_json_success($results);
+    }
+    public function get_translations_by_url() {
+
+        check_ajax_referer('salt_ai_translator_nonce', '_ajax_nonce');
+
+        $lang        = sanitize_text_field($_POST['lang'] ?? '');
+        $lang_source = sanitize_text_field($_POST['lang_source'] ?? '');
+        $format      = sanitize_text_field($_POST['format'] ?? '');
+        $data        = json_decode( stripslashes( $_POST['data'] ?? [] ), true );
+
+        if (!$data || !$lang) {
+            wp_send_json_error('Eksik parametre.');
+        }
+
+        $integration = $this->container->get('integration');
+
+        if (!$integration || !method_exists($integration, 'get_post_translations') || !method_exists($integration, 'get_term_translations')) {
+            wp_send_json_error('Çeviri yöntemi bulunamadı.');
+        }
+
+        $transient_key = 'salt_translations_output';
+        $existing = get_transient($transient_key) ?: [];
+
+        try {
+            $translations = [];
+            switch($data["type"]){
+                case "post":
+                    $translations = $integration->get_post_translations($data["id"], $lang_source, $lang );
+                    //$html = $this->render_post_row_html($data["id"], $data["id"]);
+                break;
+                case "term":
+                    $translations = $integration->get_term_translations($data["id"], $data["post_type"], $lang_source, $lang );
+                    //$html = $this->render_term_row_html($data["id"], $data["id"]);
+                break;
+            }
+            /*$results = [
+                "translations" => $translations,
+                "html" => $html
+            ];*/
+            $existing = array_merge($existing, $translations);
+            set_transient($transient_key, $existing, HOUR_IN_SECONDS);
+            wp_send_json_success();
+
+        } catch (Exception $e) {
+            wp_send_json_error($e->getMessage());
+        }
+    }
+    public function get_translations_dictionary($lang_source = "", $lang_target = "") {
+        $translations = [];
+
+        $integration = $this->container->get('integration');
+
+        $theme_dir = get_template_directory();
+        $lang_dir  = trailingslashit($theme_dir) . 'languages/';
+        $domain    = defined('TEXT_DOMAIN') ? TEXT_DOMAIN : basename($theme_dir);
+
+        require_once ABSPATH . 'wp-includes/pomo/po.php';
+
+        $source_po = new PO();
+        $source_file_path = '';
+
+        // Kaynak dosyasını belirle:
+        // Varsayılan dil kontrolü
+        // Varsayılan dilin değerini $default_language_code değişkenine ataman gerekiyor.
+        // Örneğin, 'tr', 'en', 'de' gibi
+
+        if (!empty($lang_source) && $lang_source === $integration->default_language) {
+            // Kaynak dil varsayılan dil ise, doğrudan POT dosyasını kullan
+            $source_file_path = $lang_dir . $domain . '.pot';
+            if (!file_exists($source_file_path)) {
+                error_log("Template dosyası bulunamadı: " . $source_file_path);
+                return [];
+            }
+        } elseif (!empty($lang_source)) {
+            // Kaynak dil varsayılan dil değilse, PO dosyasını bulmaya çalış
+            $source_pattern = $lang_dir . $lang_source . '_*.po';
+            $source_files = glob($source_pattern);
+            if (empty($source_files)) {
+                $source_files = glob($lang_dir . $lang_source . '.po');
+            }
+
+            if (!empty($source_files)) {
+                $source_file_path = $source_files[0];
+            } else {
+                error_log("Kaynak dil dosyası bulunamadı: " . $lang_source);
+                return [];
+            }
+        } else {
+            // lang_source belirtilmezse, doğrudan POT dosyasını kullan
+            $source_file_path = $lang_dir . $domain . '.pot';
+            if (!file_exists($source_file_path)) {
+                error_log("Template dosyası bulunamadı: " . $source_file_path);
+                return [];
+            }
+        }
+        
+        $source_po->import_from_file($source_file_path);
+
+        // Hedef dilin PO dosyasını bul ve yükle
+        $target_pattern = $lang_dir . $lang_target . '_*.po';
+        $target_files = glob($target_pattern);
+        if (empty($target_files)) {
+            $target_files = glob($lang_dir . $lang_target . '.po');
+        }
+        if (empty($target_files)) {
+            error_log("Hedef dil dosyası bulunamadı: " . $lang_target);
+            return [];
+        }
+        $target_po = new PO();
+        $target_po->import_from_file($target_files[0]);
+
+        // Çevirileri oluştur
+        foreach ($source_po->entries as $entry) {
+            $key = $entry->singular;
+            $source_text = '';
+            $target_text = '';
+
+            // Kaynak metni al
+            if (!empty($entry->is_plural)) {
+                $source_text = implode(', ', $entry->translations);
+            } else {
+                $source_text = $entry->translations[0] ?? $key;
+            }
+
+            // Hedef çeviriyi al
+            $target_entry = $target_po->entries[$entry->key()] ?? null;
+            if ($target_entry) {
+                if (!empty($target_entry->is_plural)) {
+                    $target_text = implode(', ', $target_entry->translations);
+                } else {
+                    $target_text = $target_entry->translations[0] ?? '';
+                }
+            }
+            
+            $translations[] = [
+                $lang_source => $source_text,
+                $lang_target => $target_text
+            ];
+        }
+
+        return $translations;
+    }
+    public function export_translations_download(){
+        $lang_source = sanitize_text_field($_POST['lang_source']);
+        if(empty($lang_source)){
+            $integration = $this->container->get('integration');
+            $lang_source = $integration->default_language;
+        }
+        $lang_target = sanitize_text_field($_POST['lang_target']);
+        $format = sanitize_text_field($_POST['format'] ?? 'excel');
+        $transient_key = 'salt_translations_output';
+        $translations  = get_transient($transient_key) ?? [];
+        if (!$translations || empty($format)) wp_die('No translations available.');
+
+        $dictionary = $this->get_translations_dictionary($lang_source, $lang_target);
+        $translations = array_merge($translations, $dictionary );
+        set_transient($transient_key, $translations, HOUR_IN_SECONDS);
+
+        $file = $this->export_translations($translations, $format, 'salt-translations-' . $lang_target);
+        wp_send_json_success(["file" => $file]);
+    }
+    public function export_translations_download_cache(){
+        $lang = sanitize_text_field($_POST['lang'] ?? 'en');
+        $format = sanitize_text_field($_POST['format'] ?? 'excel');
+        $transient_key = 'salt_translations_output';
+        $translations  = get_transient($transient_key) ?? [];
+        if (!$translations || empty($format)) wp_die('No translations available.');
+        $file = $this->export_translations($translations, $format, 'salt-translations-' . $lang);
+        wp_send_json_success(["file" => $file]);
+    }
+    public function sanitize_html_for_export($html) {
+        // WordPress block yorumlarını temizle
+        //$html = preg_replace('/<!-- wp:[\s\S]*?-->/', '', $html);
+
+        // &nbsp; gibi HTML entity’leri dönüştür
+        //$html = html_entity_decode($html, ENT_QUOTES | ENT_HTML5, 'UTF-8');
+
+        // Fazla boşluk ve satırları temizle
+        //$html = trim(preg_replace('/\n\s*\n+/', "\n\n", $html));
+
+        return $html;
+    }
+    public function export_translations($data, $format = 'word', $filename = 'salt-translations') {
+
+        $upload_dir = wp_upload_dir();
+        $base_path  = trailingslashit($upload_dir['basedir']);
+        $base_url   = trailingslashit($upload_dir['baseurl']);
+
+        $file_path = $base_path . $filename;
+        $file_url  = $base_url . $filename;
+
+        if ($format === 'word') {
+            $file_path .= '.docx';
+            $file_url  .= '.docx';
+
+            $phpWord = new PhpWord();
+            $section = $phpWord->addSection();
+
+            foreach ($data as $item) {
+                foreach ($item as $text) {
+                    if (is_array($text)) {
+                        $text = implode(' ', $text);
+                    }
+                    
+                    $text = (string) $text; // Tipi string'e dönüştür
+                    $plainText = strip_tags(html_entity_decode($text, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+
+                    $section->addText($plainText);
+                    $section->addTextBreak(1);
+                }
+            }
+            
+            $writer = WordIO::createWriter($phpWord, 'Word2007');
+            $writer->save($file_path);
+
+        } elseif ($format === 'excel') {
+
+            $file_path .= '.xlsx';
+            $file_url  .= '.xlsx';
+
+            $spreadsheet = new Spreadsheet();
+            $sheet = $spreadsheet->getActiveSheet();
+            $rowIndex = 1;
+
+            $headerRow = array_keys($data[0]);
+            $colIndex = 1;
+            foreach ($headerRow as $lang) {
+                $columnString = Coordinate::stringFromColumnIndex($colIndex);
+                $cellCoordinate = $columnString . $rowIndex;
+                
+                $sheet->setCellValue($cellCoordinate, strtoupper($lang));
+                $sheet->getStyle($cellCoordinate)->applyFromArray([
+                    'font' => [
+                        'bold' => true,
+                        'color' => ['rgb' => 'FFFFFF'],
+                    ],
+                    'fill' => [
+                        'fillType' => Fill::FILL_SOLID,
+                        'startColor' => ['rgb' => '000000'],
+                    ],
+                ]);
+                
+                $colIndex++;
+            }
+            $rowIndex++;
+
+            foreach ($data as $item) {
+                $colIndex = 1;
+                foreach ($item as $text) {
+                    if (is_array($text)) {
+                        $text = implode(' ', $text);
+                    }
+                    
+                    // DOMDocument'e UTF-8 kodlamasını zorla
+                    $dom = new DOMDocument();
+                    @$dom->loadHTML('<?xml encoding="UTF-8">' . '<div>' . (string)$text . '</div>');
+
+                    $richText = new RichText();
+                    
+                    $this->processDomNode($dom->documentElement, $richText);
+
+                    $columnString = Coordinate::stringFromColumnIndex($colIndex);
+                    $cellCoordinate = $columnString . $rowIndex;
+                    $sheet->setCellValue($cellCoordinate, $richText);
+                    $sheet->getStyle($cellCoordinate)->getAlignment()->setWrapText(true);
+                    
+                    $sheet->getColumnDimension($columnString)->setWidth(60);
+                    
+                    $colIndex++;
+                }
+                $rowIndex++;
+            }
+
+            $writer = ExcelIO::createWriter($spreadsheet, 'Xlsx');
+            $writer->save($file_path);
+        }
+
+        return $file_url;
+    }
+    
+    /**
+     * HTML ağacını gezerek PhpSpreadsheet'in RichText nesnesini oluşturur.
+     *
+     * @param DOMNode $node İşlenecek DOM düğümü.
+     * @param RichText $richText Ana RichText nesnesi.
+     */
+    private function processDomNode($node, &$richText) {
+        if ($node->nodeType === XML_TEXT_NODE) {
+            $richText->createText(html_entity_decode($node->nodeValue, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+        } elseif ($node->nodeType === XML_ELEMENT_NODE) {
+            $style = $this->getStyleFromTag($node->tagName);
+
+            if ($style) {
+                $run = $richText->createTextRun('');
+                if (isset($style['bold']) && $style['bold']) {
+                    $run->getFont()->setBold(true);
+                }
+                if (isset($style['size'])) {
+                    $run->getFont()->setSize($style['size']);
+                }
+                
+                $innerText = '';
+                foreach ($node->childNodes as $child) {
+                    $innerText .= $child->textContent;
+                }
+                $run->setText(html_entity_decode($innerText, ENT_QUOTES | ENT_HTML5, 'UTF-8'));
+                
+            } else {
+                foreach ($node->childNodes as $child) {
+                    $this->processDomNode($child, $richText);
+                }
+            }
+            
+            if ($node->tagName === 'br' || $node->tagName === 'p' || preg_match('/^h[1-6]$/', $node->tagName)) {
+                 $richText->createText("\n");
+            }
+        }
+    }
+    
+    /**
+     * Etiket adlarına göre PhpSpreadsheet stil ayarlarını döndürür.
+     *
+     * @param string $tag Etiket adı (örn: 'h1', 'strong').
+     * @return array|null Stil ayarları dizisi veya null.
+     */
+    private function getStyleFromTag($tag) {
+        switch (strtolower($tag)) {
+            case 'h1':
+            case 'h2':
+            case 'h3':
+            case 'h4':
+            case 'h5':
+            case 'h6':
+                return ['bold' => true, 'size' => 12 + (6 - intval(substr($tag, 1)))];
+            case 'strong':
+            case 'b':
+                return ['bold' => true];
+            default:
+                return null;
+        }
+    }
+
+
+
+    
     public function isLocalhost() {
         $remoteAddr = $_SERVER['REMOTE_ADDR'] ?? '';
         $serverAddr = $_SERVER['SERVER_ADDR'] ?? '';
@@ -1020,12 +1546,12 @@ class Salt_AI_Translator_Plugin {
         if (is_wp_error($new_post_id)) return 0;
 
         // ✅ Tüm meta'ları kopyala
-        $metas = get_post_meta($post_id);
+        /*$metas = get_post_meta($post_id);
         foreach ($metas as $key => $values) {
             foreach ($values as $value) {
                 add_post_meta($new_post_id, $key, maybe_unserialize($value));
             }
-        }
+        }*/
 
         // ✅ Tüm taxonomy'leri kopyala
         $taxonomies = get_object_taxonomies($post->post_type);
@@ -1034,17 +1560,71 @@ class Salt_AI_Translator_Plugin {
             wp_set_object_terms($new_post_id, $terms, $taxonomy);
         }
 
-        // ✅ ACF varsa field'ları da taşı
+
+
+        // 1. Tüm meta verilerini SQL ile kopyala
+        /*global $wpdb;
+        $wpdb->query(
+            $wpdb->prepare(
+                "INSERT INTO {$wpdb->postmeta} (post_id, meta_key, meta_value)
+                 SELECT %d, meta_key, meta_value
+                 FROM {$wpdb->postmeta}
+                 WHERE post_id = %d",
+                $new_post_id, $post_id
+            )
+        );
+
+        // 2. Post Object field’larını tekrar set et (ID olarak)
         if (function_exists('get_field_objects')) {
             $fields = get_field_objects($post_id);
             if ($fields) {
+                foreach ($fields as $field_key => $field) {
+
+
+                    if (!empty($field['value']) && $field['type'] === 'post_object') {
+                        update_field($field_key, $field['value'], $new_post_id);
+                    }
+                }
+            }
+        }*/
+        global $wpdb;
+        $metas = $wpdb->get_results(
+            $wpdb->prepare("SELECT meta_key, meta_value FROM $wpdb->postmeta WHERE post_id = %d", $post_id)
+        );
+        foreach ($metas as $meta) {
+            if (is_protected_meta($meta->meta_key, 'post')) continue;
+            add_post_meta($new_post_id, $meta->meta_key, maybe_unserialize($meta->meta_value));
+        }
+
+
+
+        // ✅ ACF varsa field'ları da taşı
+        /*if (function_exists('get_field_objects')) {
+
+            //$current_lang = apply_filters('acf/settings/current_language', null);
+            //add_filter('acf/settings/current_language', fn() => '');
+
+            $fields = get_field_objects($post_id);
+            if ($fields) {
+                error_log("duplicaed acf fields");
+                error_log(print_r($fields, true));
                 foreach ($fields as $field_key => $field) {
                     if (!empty($field['value']) && !is_protected_meta($field_key, 'post')) {
                         update_field($field_key, $field['value'], $new_post_id);
                     }
                 }
             }
-        }
+
+            //if ($current_lang) {
+            //    add_filter('acf/settings/current_language', fn() => $current_lang);
+            //}
+
+        }*/
+        
+        error_log("duplicate in kaydedilen storesi");
+        error_log(print_r(get_field("stores", $new_post_id), true));
+
+
 
         // ✅ Öne çıkan görsel
         $thumbnail_id = get_post_thumbnail_id($post_id);
@@ -1161,21 +1741,6 @@ class Salt_AI_Translator_Plugin {
         return strip_tags($text);
     }
 
-
-
-
-
-
-
-
-    public function is_content_changed($post){
-        $current_hash = md5($post->post_content);
-        $previous_hash = get_post_meta($post->ID, '_salt_translate_content_hash', true);
-        if ($current_hash !== $previous_hash) {
-            return update_post_meta($post->ID, '_salt_translate_content_hash', $current_hash);
-        }
-        return false;
-    }
     public function is_doing_translate() {
         return !empty($GLOBALS['salt_ai_doing_translate']);
     }
@@ -1192,128 +1757,6 @@ class Salt_AI_Translator_Plugin {
         $formatted = "[{$timestamp}] {$message}\n";
         file_put_contents($log_file, $formatted, FILE_APPEND);
     }
-
-
-    public function meta_description($desc, $post) {
-        $integration = $this->container->get('integration');
-        $current_lang = $integration->current_language;
-        $default_lang = $integration->default_language;
-
-        if ($current_lang === $default_lang || is_admin()) {
-            return $desc;
-        }
-        echo "xxx _yoast_wpseo_metadesc_{$current_lang}";
-        $translated = get_post_meta($post->ID, "_yoast_wpseo_metadesc_{$current_lang}", true);
-        return !empty($translated) ? $translated : $desc;
-    }
-
-    public function decode_html_entities($text) {
-        $text = preg_replace('/u([0-9a-fA-F]{4})/', '\\\\u$1', $text);
-        $text = json_decode('"' . $text . '"');
-        return html_entity_decode($text);
-    }
-    public function encode_html_entities($text) {
-        $text = json_encode($text, JSON_UNESCAPED_UNICODE);
-        $text = substr($text, 1, -1);
-        $text = preg_replace('/\\\\\\\\u([0-9a-fA-F]{4})/', '\\\\u$1', $text);
-        return $text;
-    }
-
-    public function cleanHTML(string $html): array {
-        // Düz metin kontrolü
-        if (strip_tags($html) === $html) {
-            return [
-                'segments' => [trim($html)],
-                'document' => null,
-                'text_nodes' => null,
-                'plain' => true,
-            ];
-        }
-
-        // HTML parse et
-        $doc = new \DOMDocument();
-        libxml_use_internal_errors(true);
-        $doc->loadHTML(mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8'), LIBXML_HTML_NOIMPLIED | LIBXML_HTML_NODEFDTD);
-        libxml_clear_errors();
-
-        $xpath = new \DOMXPath($doc);
-        $text_nodes = $xpath->query('//text()[normalize-space()]');
-
-        $segments = [];
-
-        foreach ($text_nodes as $node) {
-            $text = trim($node->nodeValue);
-
-            // 1. Tamamen boş ya da sadece &nbsp; gibi karakterlerse atla
-            if ($text === '' || preg_match('/^\x{00A0}+$/u', $text)) {
-                continue;
-            }
-
-            // 2. Shortcode gibi görünüyorsa atla (örn: [shortcode attr='x'])
-            if (preg_match('/^\[.+?\]$/s', $text)) {
-                continue;
-            }
-
-            // 3. E-posta adresleri ya da mailto: içeriyorsa atla
-            if (filter_var($text, FILTER_VALIDATE_EMAIL) || stripos($text, 'mailto:') !== false) {
-                continue;
-            }
-
-            $segments[] = $text;
-        }
-
-        return [
-            'segments' => $segments,
-            'document' => $doc,
-            'text_nodes' => $text_nodes,
-            'plain' => false,
-        ];
-    }
-
-    public function replaceHTML($document, $text_nodes, array $translated_segments, bool $plain = false): string {
-    if ($plain) {
-        return $translated_segments[0] ?? '';
-    }
-
-    $i = 0;
-    foreach ($text_nodes as $node) {
-        $original = trim($node->nodeValue);
-
-        // Aynı filtreleri burada da uygula
-        if (
-            $original === '' ||
-            preg_match('/^\x{00A0}+$/u', $original) || // nbsp
-            preg_match('/^\[.+?\]$/s', $original) || // shortcode
-            filter_var($original, FILTER_VALIDATE_EMAIL) ||
-            stripos($original, 'mailto:') !== false
-        ) {
-            continue;
-        }
-
-        if (isset($translated_segments[$i])) {
-            $node->nodeValue = htmlspecialchars_decode($translated_segments[$i], ENT_QUOTES | ENT_HTML5);
-        }
-
-        $i++;
-    }
-
-    $html = $document->saveHTML();
-
-    // body içinde sarılmışsa sadece içeriği al
-    $body_start = stripos($html, '<body>');
-    $body_end   = stripos($html, '</body>');
-
-    if ($body_start !== false && $body_end !== false) {
-        $body_start += strlen('<body>');
-        return trim(substr($html, $body_start, $body_end - $body_start));
-    }
-
-    return trim($html);
-}
-
-
-
-
 
     //Pro Features
     /*public function get_seo_description($post_id = 0){

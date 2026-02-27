@@ -9,6 +9,7 @@ document.addEventListener('DOMContentLoaded', function () {
     const btns = document.getElementById('salt-start-buttons');
     const startMenuBtn = document.getElementById('salt-start-menu-translation');
     const startStringBtn = document.getElementById('salt-start-string-translation');
+    const startPostTypeTaxonomyBtn = document.getElementById('salt-start-post_type-taxonomy-translation');
 
     const viewer = document.getElementById("salt-translation-viewer");
 
@@ -153,6 +154,55 @@ document.addEventListener('DOMContentLoaded', function () {
                 viewer.classList.remove("salt-spinner");
             });
         });
+    }
+
+    if(startPostTypeTaxonomyBtn){
+        startPostTypeTaxonomyBtn.addEventListener('click', function () {
+            const lang = langSelect.value;
+
+            if (!lang) {
+                alert('Lütfen bir dil seçin.');
+                return;
+            }
+
+            viewer.style.display = 'flex';
+            viewer.classList.add("salt-spinner");
+            btns.style.display = 'none';
+            statusText.innerText = '';
+
+            const langLabel = langSelect.options[langSelect.selectedIndex].text;
+
+            fetch(ajaxurl, {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/x-www-form-urlencoded'
+                },
+                body: new URLSearchParams({
+                    action: 'translate_post_type_taxonomy',
+                    lang: lang,
+                    _ajax_nonce: saltTranslator.nonce
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                console.log(data)
+                if (data.success) {
+                    const status = data.data.status;
+                    const msg = data?.data?.status_text;
+
+                    infoBox.style.display = 'flex';
+                    viewer.classList.remove("salt-spinner");
+                    statusText.innerHTML = msg;
+                    btns.style.display = "block"
+                }
+            })
+            .catch(err => {
+                console.error("AJAX hatası:", err);
+                alert('Bir bağlantı hatası oluştu.');
+                viewer.classList.remove("salt-spinner");
+            });
+        });
+
     }
 
 });

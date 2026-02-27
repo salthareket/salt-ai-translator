@@ -49,6 +49,16 @@
                     <?php 
                     }
                     ?>
+                    <?php 
+                    if($this->ml_plugin["key"] == "qtranslate-xt"){
+                    ?>
+                    <button id="salt-start-post_type-taxonomy-translation" class="salt-button bg-primary" style="min-width:250px;">
+                        <strong><?php _e('Translate Post Types & Taxonomies', 'salt-ai-translator'); ?></strong>
+                        <span><?php _e('Translate label & slugs', 'salt-ai-translator'); ?></span>
+                    </button>
+                    <?php 
+                    }
+                    ?>
                 </div>
 
             </div>

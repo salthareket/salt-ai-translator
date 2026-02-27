@@ -47,7 +47,7 @@ document.addEventListener('DOMContentLoaded', function () {
                 if (need_translate > 0) {
 
                     let msg = `${total} terimin ${need_translate} adedi "${langLabel}" diline çevrilmemiş.`;
-                    if (saltTranslator.settings?.retranslate_existing) {
+                    if (saltTranslator.settings?.retranslate) {
                         if(translated > 0){
                             msg = `${translated} adedinin çevirisi yapılmış toplam ${total} terim "${langLabel}" diline yeniden çevrilecek.`;
                         }else{
@@ -60,14 +60,14 @@ document.addEventListener('DOMContentLoaded', function () {
                     progressBar.innerText = '0%';
 
                 } else {
-                    const msg = saltTranslator.settings?.retranslate_existing
+                    const msg = saltTranslator.settings?.retranslate
                         ? `${total} adet terimin tümü "${langLabel}" diline çevrilmişti. Hepsi yeniden çevrilecek.`
                         : `${total} adet terimin tümü "${langLabel}" diline çevrilmiş.`;
 
                     statusText.innerText = msg;
-                    progressBar.style.width = saltTranslator.settings?.retranslate_existing ? '0%' : '100%';
-                    progressBar.innerText   = saltTranslator.settings?.retranslate_existing ? '0%' : 'Tamamlandı';
-                    startBtn.style.display  = saltTranslator.settings?.retranslate_existing ? 'inline-block' : 'none';
+                    progressBar.style.width = saltTranslator.settings?.retranslate ? '0%' : '100%';
+                    progressBar.innerText   = saltTranslator.settings?.retranslate ? '0%' : 'Tamamlandı';
+                    startBtn.style.display  = saltTranslator.settings?.retranslate ? 'inline-block' : 'none';
                 }
             }
         })

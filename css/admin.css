@@ -215,6 +215,11 @@ h4.salt-section-header{
 
 
 /* === Form === */
+.salt-form-group-row {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 0px 20px;
+}
 .salt-form-group {
   margin-bottom: 20px;
 }
