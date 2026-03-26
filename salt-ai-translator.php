@@ -632,16 +632,29 @@ class Salt_AI_Translator_Plugin {
             wp_send_json_error('Eksik bilgi');
         }
         try {
-            //$this->load_translator_class();
             $integration = $this->container->get('integration');
             $translator  = $this->container->get('translator');
             if (($this->options['translator'] ?? '') === 'openai' && $prompt && method_exists($translator, 'set_custom_prompt')) {
                 $translator->set_custom_prompt($prompt);
             }
             $this->log($post_id." postunun metasından ".$lang." diline ceviri isteği geldi.");
-            $integration->translate_post($post_id, $lang);
+
+            // Çeviri sırasında QueryCache'i sustur
+            $this->suspend_query_cache();
+
+            $translated_id = $integration->translate_post($post_id, $lang);
+
+            // Çeviri bitti, cache'i temizle
+            $this->flush_post_cache($post_id);
+            if ($translated_id && $translated_id !== $post_id) {
+                $this->flush_post_cache($translated_id);
+            }
+
+            $this->resume_query_cache();
+
             wp_send_json_success();
         } catch (Exception $e) {
+            $this->resume_query_cache();
             wp_send_json_error($e->getMessage());
         }
     }
@@ -715,23 +728,31 @@ class Salt_AI_Translator_Plugin {
     }
     public function handle_translate_term_meta_box_ajax() {
         check_ajax_referer('salt_translate_term_manual_ajax', 'nonce');
-        $term_id = intval($_POST['term_id'] ?? 0);
+        $term_id  = intval($_POST['term_id'] ?? 0);
         $taxonomy = sanitize_text_field($_POST['taxonomy'] ?? '');
-        $lang = sanitize_text_field($_POST['language'] ?? '');
-        $prompt = sanitize_textarea_field($_POST['prompt'] ?? '');
+        $lang     = sanitize_text_field($_POST['language'] ?? '');
+        $prompt   = sanitize_textarea_field($_POST['prompt'] ?? '');
         if (!$term_id || !$taxonomy || !$lang) {
             wp_send_json_error('Eksik bilgi');
         }
         try {
-            //$this->load_translator_class();
             $integration = $this->container->get('integration');
             $translator  = $this->container->get('translator');
             if (($this->options['translator'] ?? '') === 'openai' && $prompt && method_exists($translator, 'set_custom_prompt')) {
                 $translator->set_custom_prompt($prompt);
             }
-            $integration->translate_term($term_id, $taxonomy, $lang);
+
+            $this->suspend_query_cache();
+            $translated_id = $integration->translate_term($term_id, $taxonomy, $lang);
+            $this->flush_term_cache($term_id);
+            if ($translated_id && $translated_id !== $term_id) {
+                $this->flush_term_cache($translated_id);
+            }
+            $this->resume_query_cache();
+
             wp_send_json_success('Başarılı');
         } catch (Exception $e) {
+            $this->resume_query_cache();
             wp_send_json_error('Hata: ' . $e->getMessage());
         }
     }
@@ -887,16 +908,28 @@ class Salt_AI_Translator_Plugin {
 
         $integration = $this->container->get('integration');
 
-        // ($this->integration_instance zaten plugins_loaded sırasında set edilmiş olmalı)
         if (!$integration || !method_exists($integration, 'translate_post')) {
             wp_send_json_error('Çeviri yöntemi bulunamadı.');
         }
 
         try {
+            // Çeviri sırasında QueryCache'i sustur — her update_field çağrısı cache fırtınası yaratmasın
+            $this->suspend_query_cache();
+
             $post_id_translated = $integration->translate_post($post_id, $lang);
+
+            // Çeviri bitti, ilgili post'un cache'ini temizle
+            $this->flush_post_cache($post_id);
+            if ($post_id_translated && $post_id_translated !== $post_id) {
+                $this->flush_post_cache($post_id_translated);
+            }
+
+            $this->resume_query_cache();
+
             $html = $this->render_post_row_html($post_id, $post_id_translated, $lang);
             wp_send_json_success(["html" => $html]);
         } catch (Exception $e) {
+            $this->resume_query_cache();
             wp_send_json_error($e->getMessage());
         }
     }
@@ -934,20 +967,36 @@ class Salt_AI_Translator_Plugin {
             return function_exists('pll_is_translated_post_type') && pll_is_translated_post_type($post_type);
         });
 
-         error_log("----------- autotranslate_post -> control -> ".$post->post_type." ok:".(in_array($post->post_type, $post_types)));
+        error_log("----------- autotranslate_post -> control -> ".$post->post_type." ok:".(in_array($post->post_type, $post_types)));
 
         if (in_array($post->post_type, $post_types)) return;
 
         error_log("------- çeviri başlaaar");
 
         $integration = $this->container->get("integration");
-        $languages = $integration->get_languages();
+        $languages   = $integration->get_languages();
         error_log(print_r($languages, true));
-        if($languages){
-            foreach($languages as $key => $language){
+
+        if ($languages) {
+            // Çeviri sırasında QueryCache'i sustur
+            $this->suspend_query_cache();
+
+            $translated_ids = [];
+            foreach ($languages as $key => $language) {
                 error_log("integration->translate_post(".$post_id.", ".$key.");");
-                $integration->translate_post($post_id, $key);
+                $translated_id = $integration->translate_post($post_id, $key);
+                if ($translated_id) {
+                    $translated_ids[] = $translated_id;
+                }
             }
+
+            // Çeviri bitti, kaynak ve hedef post'ların cache'ini temizle
+            $this->flush_post_cache($post_id);
+            foreach ($translated_ids as $tid) {
+                $this->flush_post_cache($tid);
+            }
+
+            $this->resume_query_cache();
         }
     }
     /*public function handle_ajax_start_post_queue() {
@@ -1005,12 +1054,23 @@ class Salt_AI_Translator_Plugin {
         }
 
         try {
+            $this->suspend_query_cache();
+
             $term_id_translated = $integration->translate_term($term_id, $taxonomy, $lang);
             error_log($term_id.", ".$taxonomy.", ".$lang);
             error_log("term_id_translated:".$term_id_translated);
+
+            $this->flush_term_cache($term_id);
+            if ($term_id_translated && $term_id_translated !== $term_id) {
+                $this->flush_term_cache($term_id_translated);
+            }
+
+            $this->resume_query_cache();
+
             $html = $this->render_term_row_html($term_id, $term_id_translated, $lang);
             wp_send_json_success(["html" => $html]);
         } catch (Exception $e) {
+            $this->resume_query_cache();
             wp_send_json_error($e->getMessage());
         }
     }
@@ -1794,6 +1854,43 @@ class Salt_AI_Translator_Plugin {
 
     public function is_doing_translate() {
         return !empty($GLOBALS['salt_ai_doing_translate']);
+    }
+
+    /**
+     * Çeviri sırasında QueryCache'i susturur.
+     * Her update_field/wp_update_post çağrısı cache fırtınası yaratmasın.
+     */
+    private function suspend_query_cache(): void {
+        if ( class_exists('QueryCache') && QueryCache::$initiated ) {
+            QueryCache::$cache = false;
+        }
+    }
+
+    /**
+     * Çeviri bittikten sonra QueryCache'i yeniden aktif eder.
+     */
+    private function resume_query_cache(): void {
+        if ( class_exists('QueryCache') && QueryCache::$initiated ) {
+            QueryCache::$cache = true;
+        }
+    }
+
+    /**
+     * Belirli bir post'a ait tüm QueryCache girişlerini temizler.
+     */
+    private function flush_post_cache( int $post_id ): void {
+        if ( ! class_exists('QueryCache') || ! QueryCache::$initiated ) return;
+        QueryCache::on_post_change( $post_id );
+    }
+
+    /**
+     * Belirli bir term'e ait tüm QueryCache girişlerini temizler.
+     */
+    private function flush_term_cache( int $term_id ): void {
+        if ( ! class_exists('QueryCache') || ! QueryCache::$initiated ) return;
+        $term = get_term( $term_id );
+        $taxonomy = ( $term && ! is_wp_error($term) ) ? $term->taxonomy : '';
+        QueryCache::on_term_change( $term_id, 0, $taxonomy );
     }
 
     public function log($message) {
