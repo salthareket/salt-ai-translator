@@ -4,6 +4,28 @@ namespace SaltAI\Integrations;
 
 use SaltAI\Core\ServiceContainer;
 
+/* * WordPress ve Yardımcı Fonksiyonları İçe Aktar */
+use function add_filter;
+use function get_post_meta;
+use function update_post_meta;
+use function is_admin;
+use function home_url;
+use function rtrim;
+use function ltrim;
+use function substr;
+use function strlen;
+use function stripos;
+use function strtok;
+use function array_map;
+use function strtolower;
+use function array_keys;
+use function array_values;
+use function array_filter;
+use function explode;
+use function in_array;
+use function ctype_digit;
+use function wp_parse_url;
+
 if (!defined('ABSPATH')) exit;
 
 class SEOIntegration{
@@ -17,7 +39,6 @@ class SEOIntegration{
         add_filter('wpseo_twitter_description', [$this, 'frontend_meta_description'], 10, 2);
         //add_filter('wpseo_frontend_presenters', [$this, 'frontend_schema_description'], 20);
         //add_filter('wpseo_schema_needs_rebuild', '__return_true');
-        add_filter('get_post_metadata', [$this, 'frontend_image_alt'], 10, 4);
     }
 
     public function is_active(): bool {
@@ -96,27 +117,6 @@ class SEOIntegration{
 
         return $presenters;
     }
-    public function frontend_image_alt($value, $object_id, $meta_key, $single) {
-        $integration = $this->container->get('integration');
-        $current_lang = $integration->current_language;
-        $default_lang = $integration->default_language;
-
-        if ($meta_key !== '_wp_attachment_image_alt' || get_post_type($object_id) !== 'attachment') {
-            return $value;
-        }
-
-        if ($current_lang === $default_lang || is_admin()) {
-            return $value;
-        }
-
-        $original = $value[0] ?? '';
-
-        $translated = get_post_meta($object_id, "_salt_image_alt_{$current_lang}", true);
-        $translated =  !empty($translated) ? $translated : $original;
-
-        return [$translated];
-    }
-
 
     public function get_meta_description(int $id, string $lang = "", string $type = "post"): ?string {
         $meta_key = !empty($lang) ? '_salt_metadesc_' . $lang : '_yoast_wpseo_metadesc';
@@ -172,6 +172,11 @@ class SEOIntegration{
             $title   = qtranxf_use($integration->default_language, $title, false, false);
             $content = qtranxf_use($integration->default_language, $content, false, false);
         }
+
+        error_log("generate_seo_description -> title: ".$title);
+        error_log("generate_seo_description -> content: ".$content);
+
+
         $content = apply_filters('the_content', $content);
         $content = wp_strip_all_tags($content);
         $content = preg_replace('/\s+/', ' ', $content); // fazla boşlukları temizle
@@ -182,21 +187,12 @@ class SEOIntegration{
             $content = implode(" ", $integration->contents);
         }
 
+        error_log("generate_seo_description -> content filtered: ".$content);
+
         $plugin->log($content);
 
         $system = $translator->prompts["meta_desc"]["system"]();
-        /*$system = "You are an assistant that generates SEO meta descriptions. Keep them under 155 characters, clear, informative, and natural. Do not return anything except the description. Do not include quote characters at the start or end. No explanations.";
-
-        if(!empty($options["seo"]["meta_desc"]["prompt"])){
-            $system .= $options["seo"]["meta_desc"]["prompt"];
-        }
-        $user = "Generate a meta description for the following content.";
-        if ($title) {
-            $user .= "\n\nTitle: " . $title;
-        }
-        $user .= "\n\nContent:\n" . trim($clean);*/
-
-        $user = $translator->prompts["meta_desc"]["user"]("", $title, $content);
+        $user = $translator->prompts["meta_desc"]["user"]($integration->default_language, $title, $content);
 
         $messages = [
             ['role' => 'system', 'content' => $system],
@@ -209,13 +205,219 @@ class SEOIntegration{
         ]);
 
         $description = $translator->request($body);
+
+        error_log("generate_seo_description -> content openai reponse: ".$description);
+
         if (!empty($description) && is_string($description)) {
             $description = trim($description);
+            error_log("generate_seo_description -> update_meta_description(".$id.", ".$description);
             $this->update_meta_description($id, $description);
             return $description;
         }
         return null;
     }
 
+    public function get_sitemap_urls($sitemap_url = null, $urls = []) {
+        if ($sitemap_url === null) {
+            $sitemap_url = function_exists('site_url') ? site_url('/sitemap_index.xml') : '/sitemap_index.xml';
+        }
+
+        $sitemap_content = @file_get_contents($sitemap_url);
+        if (!$sitemap_content) { return []; }
+
+        $xml = @simplexml_load_string($sitemap_content);
+        if(!$xml){ return []; }
+
+        $namespaces = $xml->getDocNamespaces(true);
+        if (isset($namespaces[''])) {
+            $xml->registerXPathNamespace('ns', $namespaces['']);
+        } else {
+            $xml->registerXPathNamespace('ns', 'http://www.sitemaps.org/schemas/sitemap/0.9');
+        }
+
+        $sitemap_path      = parse_url($sitemap_url, PHP_URL_PATH) ?: '';
+        $sitemap_file_name = preg_replace('/-sitemap\.xml$/', '', basename($sitemap_path));
+        $roles             = method_exists($this, 'get_roles') ? (array) $this->get_roles() : [];
+
+        if ($xml->xpath('//ns:sitemap')) {
+            foreach ($xml->xpath('//ns:sitemap/ns:loc') as $sitemap_loc) {
+                $sub_sitemap_url = (string)$sitemap_loc;
+                $urls = $this->get_sitemap_urls($sub_sitemap_url, $urls);
+            }
+            return $urls;
+        }
+
+        foreach ($xml->xpath('//ns:url/ns:loc') as $url_loc) {
+            $url_string = (string)$url_loc;
+
+            //if (in_array($sitemap_file_name, $this->excluded_post_types, true)) continue;
+            //if (in_array($sitemap_file_name, $this->excluded_taxonomies, true)) continue;
+
+            // === (A) ROLE-BAZLI USER SİTEMAPLERİ ===
+            // Örn: /artist-sitemap.xml, /editor-sitemap.xml, projendeki özel roller...
+            if (!empty($roles) && in_array($sitemap_file_name, $roles, true)) {
+                // Senin eski mantığınla birebir:
+                $author_name = basename($url_string);
+                $author = function_exists('get_user_by') ? get_user_by('slug', $author_name) : null;
+                if ($author) {
+                    $urls[] = [
+                        "id"        => $author->ID,
+                        "type"      => "user",
+                        "post_type" => $sitemap_file_name, // role adı
+                        "url"       => $url_string
+                    ];
+                }
+                continue;
+            }
+
+            // === (B) COMMENT SİTEMAP ===
+            if ($sitemap_file_name === 'comment') {
+                $author_name = basename($url_string);
+                $author = function_exists('get_user_by') ? get_user_by('slug', $author_name) : null;
+                if ($author) {
+                    $urls[] = [
+                        "id"        => $author->ID,
+                        "type"      => "comment",
+                        "post_type" => "comment",
+                        "url"       => $url_string
+                    ];
+                }
+                continue;
+            }
+
+            // === (C) AUTHOR SİTEMAP (standart) ===
+            if ($sitemap_file_name === 'author') {
+                if (preg_match('~/author/([^/]+)/?~i', $url_string, $m)) {
+                    $user = function_exists('get_user_by') ? get_user_by('slug', sanitize_title($m[1])) : null;
+                    if ($user) {
+                        $urls[] = [
+                            "id"        => $user->ID,
+                            "type"      => "user",
+                            "post_type" => "author",
+                            "url"       => $url_string
+                        ];
+                    }
+                }
+                continue;
+            }
+
+            // === (D) POST / PAGE / CPT ===
+            if ($sitemap_file_name === 'post' || $sitemap_file_name === 'page' || (function_exists('post_type_exists') && post_type_exists($sitemap_file_name))) {
+
+                $post_id = function_exists('url_to_postid') ? url_to_postid($url_string) : 0;
+
+                // CPT arşiv: senin yeni mantığını koruyoruz
+                if (!$post_id) {
+                    $url_path = parse_url($url_string, PHP_URL_PATH);
+                    $url_segments = array_filter(explode('/', $url_path));
+                    $url_endpoint = end($url_segments);
+                    if ($url_endpoint == $sitemap_file_name && $this->is_default_lang_url($url_string)) {
+                        $urls[] = [
+                            "id"        => $sitemap_file_name,
+                            "type"      => "archive",
+                            "post_type" => $sitemap_file_name,
+                            "url"       => $url_string
+                        ];
+                        continue;
+                    }
+                }
+
+                // Fallback: slug'tan CPT objesi
+                if (!$post_id && function_exists('get_page_by_path')) {
+                    $slug = sanitize_title(basename(rtrim($url_string, '/')));
+                    $obj  = get_page_by_path($slug, OBJECT, $sitemap_file_name);
+                    if ($obj) { $post_id = (int) $obj->ID; }
+                }
+
+                if ($post_id) {
+                    $urls[] = [
+                        "id"        => $post_id,
+                        "type"      => "post",
+                        "post_type" => function_exists('get_post_type') ? get_post_type($post_id) : $sitemap_file_name,
+                        "url"       => $url_string
+                    ];
+                }
+                continue;
+            }
+
+            // === (E) TAXONOMY ===
+            $tax_alias = ['format' => 'post_format'];
+            $tax_name  = $tax_alias[$sitemap_file_name] ?? $sitemap_file_name;
+
+            if (in_array($sitemap_file_name, ['category','post_tag','post_format'], true) ||
+                (function_exists('taxonomy_exists') && taxonomy_exists($tax_name))) {
+
+                $term_slug = sanitize_title(basename(rtrim($url_string, '/')));
+                $term      = function_exists('get_term_by') ? get_term_by('slug', $term_slug, $tax_name) : null;
+
+                if ($term && !is_wp_error($term)) {
+                    $urls[] = [
+                        "id"        => $term->term_id,
+                        "type"      => "term",
+                        "post_type" => $tax_name,
+                        "url"       => $url_string
+                    ];
+                }
+                continue;
+            }
+
+            // === (F) DİĞERLERİ: gerçekten archive/özel sitemap ===
+            $urls[] = [
+                "id"        => $sitemap_file_name,
+                "type"      => "archive",
+                "post_type" => $sitemap_file_name,
+                "url"       => $url_string
+            ];
+        }
+
+        return $urls;
+    }
+
+    public function get_roles() {
+        global $wp_roles;
+        $roles = [];
+        if (!isset($wp_roles)) {
+            $wp_roles = new WP_Roles();
+        }
+        foreach ($wp_roles->roles as $role_key => $role_details) {
+            $name = $role_details['name'];
+            $roles[] = $role_key;
+        }
+        return $roles;
+    }
+
+    private function is_default_lang_url(string $url): bool {
+        $integration = $this->container->get('integration');
+        return $def && (strtolower($this->lang_from_url($url)) === $integration->default_language);
+    }
+    /** URL’den dil çıkar (path’in her segmentinde ara) */
+    private function lang_from_url(string $url): string {
+        $integration = $this->container->get('integration');
+        $default = strtolower($integration->default_language);
+        $langs   = array_map('strtolower', $this->lang_list());
+        if (!$langs) return $default ?: '';
+
+        $clean = strtok($url, '?#');
+        $base  = rtrim(home_url('/'), '/');
+        $path  = (stripos($clean, $base) === 0)
+            ? ltrim(substr($clean, strlen($base)), '/')
+            : ltrim((wp_parse_url($clean)['path'] ?? ''), '/');
+
+        foreach (array_values(array_filter(explode('/', $path), 'strlen')) as $seg) {
+            $seg = strtolower($seg);
+            if (ctype_digit($seg)) continue;
+            if (in_array($seg, $langs, true)) return $seg;
+        }
+        return $default ?: '';
+    }
+    private function lang_list(): array {
+        $integration = $this->container->get('integration');
+        return array_keys($integration->get_languages());
+        /*if (isset($GLOBALS['languages']) && is_array($GLOBALS['languages'])) {
+            $names = array_column($GLOBALS['languages'], 'name');
+            return array_values(array_filter(array_map('strval', $names)));
+        }
+        return $this->lang_default() ? [$this->lang_default()] : [];*/
+    }
 
 }

@@ -13,7 +13,7 @@ $default_temperature = '';
 
 $formality = $options['formality'] ?? '';
 $default_formality = '';
-$retranslate = $options['retranslate_existing'] ?? 0;
+$retranslate = $options['retranslate'] ?? 0;
 $retranslate_menu = $options["menu"]['retranslate'] ?? 0;
 $exclude_post_types = $options['exclude_post_types'] ?? [];
 $exclude_taxonomies = $options['exclude_taxonomies'] ?? [];
@@ -131,6 +131,9 @@ if (!empty($selected_terms)) {
 		$term_options[] = "<option value='{$term->term_id}' selected>" . esc_html($term->name) . "</option>";
 	}
 }
+
+$languages = $this->container->get("integration")->get_languages();
+$unpublished_languages = $options['display']["unpublished_languages"] ?? [];
 
 ?>
 <form method="post" action="options.php">
@@ -292,13 +295,13 @@ if (!empty($selected_terms)) {
 		    <div class="salt-form-group">
 		        <label class="salt-switch">
 		            <input type="checkbox"
-		                   id="retranslate_existing"
-		                   name="<?= SALT_AI_TRANSLATOR_PREFIX ?>_settings[retranslate_existing]"
+		                   id="retranslate"
+		                   name="<?= SALT_AI_TRANSLATOR_PREFIX ?>_settings[retranslate]"
 		                   value="1"
-		                   <?= checked($options['retranslate_existing'] ?? '', 1, false); ?>>
+		                   <?= checked($options['retranslate'] ?? '', 1, false); ?>>
 		            <span class="salt-switch-slider"></span>
 		        </label>
-		        <label for="retranslate_existing"><strong><?php _e('Retranslate existing content by overwriting it.', 'salt-ai-translator'); ?></strong></label>
+		        <label for="retranslate"><strong><?php _e('Retranslate existing content by overwriting it.', 'salt-ai-translator'); ?></strong></label>
 		    </div>
 
 			<div class="salt-form-group">
@@ -345,6 +348,30 @@ if (!empty($selected_terms)) {
 		            <?= implode('', $term_options) ?>
 		        </select>
 		    </div>
+
+
+
+
+
+		    <h2 class="salt-section-header">
+            	<strong><?php _e('Display Settings', 'salt-ai-translator'); ?></strong>
+            </h2>
+            <div class="salt-form-group">
+			    <label class="salt-label">
+			        <strong><?php _e('Languages Not to Publish', 'salt-ai-translator'); ?></strong>
+			    </label>
+			    <?php foreach ($languages as $lang_slug => $lang_name): ?>
+			        <div class="salt-form-checkbox">
+			            <label>
+			                <input type="checkbox"
+			                    name="<?= SALT_AI_TRANSLATOR_PREFIX ?>_settings[display][unpublished_languages][]"
+			                    value="<?= esc_attr($lang_slug); ?>"
+			                    <?php checked(in_array($lang_slug, $unpublished_languages ?? [], true)); ?>>
+			                <?= esc_html($lang_name); ?>
+			            </label>
+			        </div>
+			    <?php endforeach; ?>
+			</div>
 
 
 
@@ -610,6 +637,9 @@ if (!empty($selected_terms)) {
 						<label class="salt-label"><strong><?php _e('Model', 'salt-ai-translator'); ?></strong></label>
 						<select name="<?= SALT_AI_TRANSLATOR_PREFIX ?>_settings[seo][image_alttext][model]" class="salt-select">
 							<?php foreach ($models as $key => $modelData): ?>
+								<?php 
+								if($modelData['vision']){
+								?>
 								<option value="<?= esc_attr($key) ?>" <?= selected($model_image_alttext, $key, false) ?>>
 									<?= esc_html("{$modelData['name']} ({$modelData['input_price']}/input | {$modelData['output_price']}/output)") ?>
 									<?php
@@ -618,6 +648,9 @@ if (!empty($selected_terms)) {
 									}
 									?>
 								</option>
+								<?php
+								}
+								?>
 							<?php endforeach; ?>
 						</select>
 					</div>
@@ -647,7 +680,7 @@ if (!empty($selected_terms)) {
             	<strong><?php _e('Other Translations', 'salt-ai-translator'); ?></strong>
             </h2>
             <h3 class="salt-section-title">
-            	<strong><?php _e('Menu Tranlation', 'salt-ai-translator'); ?></strong>
+            	<strong><?php _e('Menu Translation', 'salt-ai-translator'); ?></strong>
             </h3>
 		    <div class="salt-form-group">
 		        <label class="salt-switch">
