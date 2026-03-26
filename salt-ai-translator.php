@@ -15,7 +15,7 @@ use PhpOffice\PhpSpreadsheet\RichText\Run;
  * Plugin Name: Salt AI Translator
  * Text Domain: salt-ai-translator
  * Description: Otomatik çok dilli çeviri sistemi. OpenAI, DeepL vb. destekler.
- * Version: 1.0.5
+ * Version: 1.0.6
  * Author: Tolga Koçak
  * Domain Path: /languages
  */
