@@ -131,7 +131,7 @@ class TranslateQueueManager {
     private function process_export_queue(): void {
         $integration = $this->container->get('integration');
         $plugin      = $this->container->get('plugin');
-        $lang        = get_option(self::POSTS_OPTION)['lang'] ?? 'en';
+        $lang        = get_option(self::EXPORT_OPTION)['lang'] ?? 'en';
 
         $args = [
             'post_type'      => 'any',
@@ -202,9 +202,9 @@ class TranslateQueueManager {
         update_option($status_key, $status);
     }
     private function get_status_key(string $type): string {
-        $key = $type === 'post' ? 'salt_translate_status_posts' : 'salt_translate_status_terms';
-        $key = $type == 'export' ? 'salt_translate_status_export' : $type;
-        return $key;
+        if ($type === 'export') return 'salt_translate_status_export';
+        if ($type === 'term') return 'salt_translate_status_terms';
+        return 'salt_translate_status_posts';
     }
     private function count_pending_items(string $type): int {
         if ($type === 'post') {
@@ -353,7 +353,7 @@ class TranslateQueueManager {
 
         if ($type === 'post') {
             update_option(self::POSTS_OPTION, ['lang' => $lang]);
-            wp_clear_scheduled_hook(POSTS_CRON_HOOK);
+            wp_clear_scheduled_hook(self::POSTS_CRON_HOOK);
             wp_schedule_single_event(time() + 5, self::POSTS_CRON_HOOK);
         } elseif ($type === 'term') {
             update_option(self::TERMS_OPTION, ['lang' => $lang]);

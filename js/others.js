@@ -100,7 +100,7 @@ document.addEventListener('DOMContentLoaded', function () {
 
             }
         })
-        .catch(err => {ı
+        .catch(err => {
             console.error("AJAX hatası:", err);
             alert('Bir bağlantı hatası oluştu.');
             viewer.classList.remove("salt-spinner");

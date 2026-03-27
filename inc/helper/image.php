@@ -104,14 +104,17 @@ class Image {
         $plugin = $this->container->get("plugin");
         $integration = $this->container->get("integration");
         $translator = $this->container->get("translator");
+        $is_openai = ($plugin->options['translator'] ?? '') === 'openai';
+
         foreach ($attachments as $image) {
             if (!$image["id"]){
                 continue;
             }
+            $alt = '';
             $alt_current = $this->get_image_alt($image["id"]);
             if($plugin->options["seo"]["image_alttext"]["preserve"] && !empty($alt_current)){
                 $alt = $alt_current;
-            }else{
+            }elseif($is_openai){
                 $image_data = $this->check_image_url($image["url"]);
                 $plugin->log($image_data);
                 if($image_data["success"]){
@@ -133,26 +136,30 @@ class Image {
 
                     if($integration->is_media_translation_enabled()){
                         $translations = function_exists('pll_get_post_translations') ? pll_get_post_translations($image["id"]) : [];
-                        if ( ! isset($translations[$lang]) || empty($translations[$lang]) ) {
+                        if (function_exists('pll_set_post_language') && ( ! isset($translations[$lang]) || empty($translations[$lang]) )) {
                             $new_image_id = $plugin->duplicate_post($image["id"]);
                             pll_set_post_language($new_image_id, $lang);
                             $translations[$lang] = $new_image_id;
                             pll_save_post_translations($translations);
-                        }else{
+                        }elseif(isset($translations[$lang]) && !empty($translations[$lang])){
                             $new_image_id = $translations[$lang];
+                        }else{
+                            $new_image_id = null;
                         }
-                        $translate_alt = true;
-                        if($plugin->options["seo"]["image_alttext"]["preserve"]){
-                            $translated_alt_current = $this->get_image_alt($new_image_id);
-                            if(!empty($translated_alt_current)){
-                                $translate_alt = false;
+                        if($new_image_id){
+                            $translate_alt = true;
+                            if($plugin->options["seo"]["image_alttext"]["preserve"]){
+                                $translated_alt_current = $this->get_image_alt($new_image_id);
+                                if(!empty($translated_alt_current)){
+                                    $translate_alt = false;
+                                }
+                            }
+                            if($translate_alt){
+                                $translated_alt = $translator->translate($alt, $lang);
+                                $this->update_image_alt($new_image_id, $translated_alt);
+                                $plugin->log("Alt Text translated to [".$lang."] for: ".$image["url"]." -> ".$translated_alt);  
                             }
                         }
-                        if($translate_alt){
-                            $translated_alt = $translator->translate($alt, $lang);
-                            $this->update_image_alt($new_image_id, $translated_alt);
-                            $plugin->log("Alt Text translated to [".$lang."] for: ".$image["url"]." -> ".$translated_alt);  
-                        }             
                     }else{
 
                         $translate_alt = true;

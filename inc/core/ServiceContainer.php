@@ -21,6 +21,7 @@ class ServiceContainer {
         
         if (isset($this->factories[$key])) {
             $this->services[$key] = call_user_func($this->factories[$key]);
+            unset($this->factories[$key]);
             return $this->services[$key];
         }
 
@@ -33,7 +34,7 @@ class ServiceContainer {
     }
 
     public function has(string $key): bool {
-        return isset($this->services[$key]);
+        return isset($this->services[$key]) || isset($this->factories[$key]);
     }
 
     public function remove(string $key): void {

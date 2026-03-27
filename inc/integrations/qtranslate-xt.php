@@ -102,7 +102,7 @@ class Integration {
 	            // innerContent çevir
 	            if (isset($block['innerContent']) && is_array($block['innerContent'])) {
 	                $block['innerContent'] = array_map(function($item) use ($lang) {
-	                	$this->contents[] = $block['innerHTML'];
+	                	$this->contents[] = $item;
 	                    return is_string($item) ? $this->translate_text($item, $lang) : $item;
 	                }, $block['innerContent']);
 	            }
@@ -215,7 +215,7 @@ class Integration {
 	    if (!empty($options["seo"]["image_alttext"]["generate"])) {
 			if($image_fields){
 				$ids = [];
-				foreach($array as $val){
+				foreach($image_fields as $val){
 
 					if(function_exists('qtranxf_isMultilingual') && qtranxf_isMultilingual($val)){
 						$translated = qtranxf_use($lang, $val);
@@ -527,6 +527,9 @@ class Integration {
 	        update_field($field_key, $field_value, "term_$term_id");
 	    }*/
 
+	    $plugin = $this->container->get("plugin");
+	    $options = $plugin->options;
+
 	    if(
 			!empty($options["seo"]["meta_desc"]["generate"])
 			&& (
@@ -538,17 +541,15 @@ class Integration {
 			$description = "";
 
 			if ($options["translator"] === "openai") {
-				$description = $seo->generate_seo_description($lang_term_id, "term");
-				//$plugin->log("Generated meta description for: ".$name." -> ".$description);
+				$description = $seo->generate_seo_description($term_id, "term");
 			}
 			if (!empty($options["seo"]["meta_desc"]["translate"])){
 				if (empty($description)) {
-					$description = $seo->get_meta_description($lang_term_id, "term");
+					$description = $seo->get_meta_description($term_id, "term");
 				}
 				if (!empty($description)) {
 					$description = $this->translate_text($description, $lang);
-					$seo->update_meta_description($lang_term_id, $description, $lang, "term");
-					//$plugin->log("Translated meta description [{$lang}] for: ".$name." -> ".$description);
+					$seo->update_meta_description($term_id, $description, $lang, "term");
 				}
 			}
 			$plugin->log("Meta Description: ".$description);
@@ -559,9 +560,9 @@ class Integration {
 		    $image->generate_alt_text($this->attachments, $lang);            	
         }
 
-        return $term->term_id;
-
 	    $GLOBALS['salt_ai_doing_translate'] = false;
+
+        return $term->term_id;
 	}
 
 

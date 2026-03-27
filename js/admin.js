@@ -112,9 +112,6 @@ jQuery(document).ready(function($){
 
         const resultBox = button.siblings('.salt-translate-response');
 
-        console.log(lang);
-        console.log($('#salt_translate_lang_' + (postId || termId)).val());
-
         if (!lang) {
             if (resultBox.length) {
                 resultBox.html('<span style="color:red;">Lütfen bir dil seçin.</span>');

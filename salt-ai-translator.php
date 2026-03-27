@@ -15,9 +15,10 @@ use PhpOffice\PhpSpreadsheet\RichText\Run;
  * Plugin Name: Salt AI Translator
  * Text Domain: salt-ai-translator
  * Description: Otomatik çok dilli çeviri sistemi. OpenAI, DeepL vb. destekler.
- * Version: 1.0.6
+ * Version: 1.0.7
  * Author: Tolga Koçak
  * Domain Path: /languages
+ * Requires Plugins: advanced-custom-fields
  */
 
 if (!defined('ABSPATH')) exit;
@@ -773,6 +774,8 @@ class Salt_AI_Translator_Plugin {
         include SALT_AI_TRANSLATOR_DIR . 'admin/views/others-ui.php';
     }
     public function seo_page(){
+        echo '<div class="wrap"><h1>' . esc_html__('SEO Settings', 'salt-ai-translator') . '</h1>';
+        echo '<p>' . esc_html__('SEO settings will be available in a future update.', 'salt-ai-translator') . '</p></div>';
     }
     public function export_page() {
         include SALT_AI_TRANSLATOR_DIR . 'admin/views/export-ui.php';
@@ -837,14 +840,23 @@ class Salt_AI_Translator_Plugin {
         if (!$term || is_wp_error($term)) return '';
 
         $taxonomy = $term->taxonomy;
-        $default_language = $this->container->get('integration')->default_language;
-        $term_name = $this->container->get('integration')->get_term_i18n_value($term, "name", $default_language);
-        $term_name_translated = '—';
+        $integration = $this->container->get('integration');
+        $default_language = $integration->default_language;
 
-        if ($term_id_translated) {
-            $translated = get_term($term_id_translated);
-            if ($translated && !is_wp_error($translated)) {
-                $term_name_translated = $translated->name;
+        if($this->ml_plugin['key'] == "qtranslate-xt"){
+            $term_name = $integration->get_term_i18n_value($term, "name", $default_language);
+            $term_name_translated = $integration->get_term_i18n_value($term, "name", $lang);
+            if(empty($term_name_translated) || $term_name_translated === $term_name){
+                $term_name_translated = '—';
+            }
+        }else{
+            $term_name = $term->name;
+            $term_name_translated = '—';
+            if ($term_id_translated) {
+                $translated = get_term($term_id_translated);
+                if ($translated && !is_wp_error($translated)) {
+                    $term_name_translated = $translated->name;
+                }
             }
         }
 
@@ -879,7 +891,7 @@ class Salt_AI_Translator_Plugin {
 
 
     public function get_untranslated_posts() {
-        //$this->load_translator_class();
+        check_ajax_referer('salt_ai_translator_nonce', '_ajax_nonce');
         $lang = sanitize_text_field($_POST['lang'] ?? '');
 
         $integration = $this->container->get('integration');
@@ -964,12 +976,13 @@ class Salt_AI_Translator_Plugin {
         $post_types = array_merge(['post', 'page'], $post_types);
         $post_types = array_diff($post_types, $excluded_post_types);
         $post_types = array_filter($post_types, function ($post_type) {
-            return function_exists('pll_is_translated_post_type') && pll_is_translated_post_type($post_type);
+            $integration = $this->container->get('integration');
+            return $integration->is_translatable_post_type($post_type);
         });
 
         error_log("----------- autotranslate_post -> control -> ".$post->post_type." ok:".(in_array($post->post_type, $post_types)));
 
-        if (in_array($post->post_type, $post_types)) return;
+        if (!in_array($post->post_type, $post_types)) return;
 
         error_log("------- çeviri başlaaar");
 
@@ -1020,7 +1033,7 @@ class Salt_AI_Translator_Plugin {
 
 
     public function get_untranslated_terms() {
-        //$this->load_translator_class();
+        check_ajax_referer('salt_ai_translator_nonce', '_ajax_nonce');
         $lang = sanitize_text_field($_POST['lang'] ?? '');
 
         $integration = $this->container->get('integration');
@@ -1057,8 +1070,6 @@ class Salt_AI_Translator_Plugin {
             $this->suspend_query_cache();
 
             $term_id_translated = $integration->translate_term($term_id, $taxonomy, $lang);
-            error_log($term_id.", ".$taxonomy.", ".$lang);
-            error_log("term_id_translated:".$term_id_translated);
 
             $this->flush_term_cache($term_id);
             if ($term_id_translated && $term_id_translated !== $term_id) {
@@ -1135,6 +1146,7 @@ class Salt_AI_Translator_Plugin {
 
 
     public function get_untranslated_posts_terms() {
+        check_ajax_referer('salt_ai_translator_nonce', '_ajax_nonce');
         $lang = sanitize_text_field($_POST['lang'] ?? '');
 
         $integration = $this->container->get('integration');
@@ -1154,6 +1166,7 @@ class Salt_AI_Translator_Plugin {
 
 
     public function translate_menu() {
+        check_ajax_referer('salt_ai_translator_nonce', '_ajax_nonce');
         $lang = sanitize_text_field($_POST['lang'] ?? '');
         $retranslate = sanitize_text_field($_POST['retranslate'] ?? 0);
 
@@ -1171,6 +1184,7 @@ class Salt_AI_Translator_Plugin {
         wp_send_json_success($data);
     }
     public function translate_strings() {
+        check_ajax_referer('salt_ai_translator_nonce', '_ajax_nonce');
         $lang = sanitize_text_field($_POST['lang'] ?? '');
         $retranslate = sanitize_text_field($_POST['retranslate'] ?? 0);
 
@@ -1188,6 +1202,7 @@ class Salt_AI_Translator_Plugin {
         wp_send_json_success($data);
     }
     public function translate_post_type_taxonomy() {
+        check_ajax_referer('salt_ai_translator_nonce', '_ajax_nonce');
         $lang = sanitize_text_field($_POST['lang'] ?? '');
 
         $integration = $this->container->get('integration');
@@ -1206,6 +1221,7 @@ class Salt_AI_Translator_Plugin {
 
 
     public function get_sitemap_urls(){
+        check_ajax_referer('salt_ai_translator_nonce', '_ajax_nonce');
         $integration = $this->container->get('integration');
         $lang_source = sanitize_text_field($_POST['lang_source'] ?? '');
         $lang = sanitize_text_field($_POST['lang'] ?? '');
@@ -1379,7 +1395,8 @@ class Salt_AI_Translator_Plugin {
         return $translations;
     }
     public function export_translations_download(){
-        $lang_source = sanitize_text_field($_POST['lang_source']);
+        check_ajax_referer('salt_ai_translator_nonce', '_ajax_nonce');
+        $lang_source = sanitize_text_field($_POST['lang_source'] ?? '');
         if(empty($lang_source)){
             $integration = $this->container->get('integration');
             $lang_source = $integration->default_language;
@@ -1398,6 +1415,7 @@ class Salt_AI_Translator_Plugin {
         wp_send_json_success(["file" => $file]);
     }
     public function export_translations_download_cache(){
+        check_ajax_referer('salt_ai_translator_nonce', '_ajax_nonce');
         $lang = sanitize_text_field($_POST['lang'] ?? 'en');
         $format = sanitize_text_field($_POST['format'] ?? 'excel');
         $transient_key = 'salt_translations_output';
@@ -1656,14 +1674,6 @@ class Salt_AI_Translator_Plugin {
 
         if (is_wp_error($new_post_id)) return 0;
 
-        // ✅ Tüm meta'ları kopyala
-        /*$metas = get_post_meta($post_id);
-        foreach ($metas as $key => $values) {
-            foreach ($values as $value) {
-                add_post_meta($new_post_id, $key, maybe_unserialize($value));
-            }
-        }*/
-
         // ✅ Tüm taxonomy'leri kopyala
         $taxonomies = get_object_taxonomies($post->post_type);
         foreach ($taxonomies as $taxonomy) {
@@ -1731,11 +1741,6 @@ class Salt_AI_Translator_Plugin {
             //}
 
         }*/
-        
-        error_log("duplicate in kaydedilen storesi");
-        error_log(print_r(get_field("stores", $new_post_id), true));
-
-
 
         // ✅ Öne çıkan görsel
         $thumbnail_id = get_post_thumbnail_id($post_id);
@@ -1782,33 +1787,23 @@ class Salt_AI_Translator_Plugin {
 
         $new_term = wp_insert_term($name, $taxonomy, $args);
 
-        if (!is_wp_error($new_term) && isset($new_term['term_id']) && $new_term['term_id'] > 0) {
-            // işlem başarılı
-        } else {
-            $this->log("✅ DEBUG: Term belki zaten var, tekrar kontrol et...");
+        if (is_wp_error($new_term)) {
+            // Belki slug çakışması — mevcut term'i bul
             $existing = get_term_by('slug', $slug, $taxonomy);
             if ($existing) {
-                $lang_term_id = $existing->term_id;
-                $this->log("♻️ Using existing term ID: $lang_term_id");
+                $this->log("♻️ Using existing term ID: " . $existing->term_id);
+                $new_term_id = $existing->term_id;
             } else {
-                $this->log("❌ Term insert failed and no fallback found.");
+                $this->log("❌ Term insert error: " . $new_term->get_error_message());
                 return 0;
             }
-        }
-
-
-        if (is_wp_error($new_term)) {
-            $this->log("❌ Term insert error: " . $new_term->get_error_message());
-            return 0;
-        }
-
-        if (!isset($new_term['term_id']) || empty($new_term['term_id'])) {
+        } elseif (!isset($new_term['term_id']) || empty($new_term['term_id'])) {
             $this->log("❌ wp_insert_term returned invalid term_id:");
             $this->log($new_term);
             return 0;
+        } else {
+            $new_term_id = $new_term['term_id'];
         }
-
-        $new_term_id = $new_term['term_id'];
 
         // ACF ve Meta kopyalama
         $fields = get_fields("term_$term_id");
