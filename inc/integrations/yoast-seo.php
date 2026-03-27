@@ -152,6 +152,11 @@ class SEOIntegration{
         $integration = $this->container->get("integration");
         $translator = $this->container->get('translator');
 
+        // DeepL does not support content generation — only OpenAI can generate descriptions
+        if (($options['translator'] ?? '') !== 'openai') {
+            return null;
+        }
+
         if($options["seo"]["meta_desc"]["preserve"]){
             if(!empty($this->get_meta_description($id))){
                 return null;
@@ -201,7 +206,7 @@ class SEOIntegration{
         $body = json_encode([
             'model' => $options["seo"]["meta_desc"]["model"] ?? 'gpt-4',
             'messages' => $messages,
-            'temperature' => (float) $options["seo"]["meta_desc"]["temperature"] ?? $this->temperature_meta_desc,
+            'temperature' => (float) ($options["seo"]["meta_desc"]["temperature"] ?? 0.5),
         ]);
 
         $description = $translator->request($body);
@@ -388,7 +393,7 @@ class SEOIntegration{
 
     private function is_default_lang_url(string $url): bool {
         $integration = $this->container->get('integration');
-        return $def && (strtolower($this->lang_from_url($url)) === $integration->default_language);
+        return strtolower($this->lang_from_url($url)) === $integration->default_language;
     }
     /** URL’den dil çıkar (path’in her segmentinde ara) */
     private function lang_from_url(string $url): string {

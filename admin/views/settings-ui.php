@@ -87,21 +87,21 @@ if ($translator === 'deepl' && file_exists(SALT_AI_TRANSLATOR_DIR . 'inc/transla
 	}
 }
 
-$model_meta_desc = $options["seo"]["meta_desc"]["model"];
-if(empty($model_meta_desc)){
+$model_meta_desc = $options["seo"]["meta_desc"]["model"] ?? '';
+if(empty($model_meta_desc) && isset($translator_class) && property_exists($translator_class, 'model_meta_desc')){
 	$model_meta_desc = $translator_class->model_meta_desc;
 }
-$temperature_meta_desc = $options["seo"]["meta_desc"]["temperature"];
-if(empty($temperature_meta_desc)){
+$temperature_meta_desc = $options["seo"]["meta_desc"]["temperature"] ?? '';
+if(empty($temperature_meta_desc) && isset($translator_class) && property_exists($translator_class, 'temperature_meta_desc')){
 	$temperature_meta_desc = $translator_class->temperature_meta_desc;
 }
             
-$model_image_alttext = $options["seo"]["image_alttext"]["model"];
-if(empty($model_image_alttext)){
+$model_image_alttext = $options["seo"]["image_alttext"]["model"] ?? '';
+if(empty($model_image_alttext) && isset($translator_class) && property_exists($translator_class, 'model_image_alttext')){
 	$model_image_alttext = $translator_class->model_image_alttext;
 }
-$temperature_image_alttext = $options["seo"]["image_alttext"]["temperature"];
-if(empty($temperature_image_alttext)){
+$temperature_image_alttext = $options["seo"]["image_alttext"]["temperature"] ?? '';
+if(empty($temperature_image_alttext) && isset($translator_class) && property_exists($translator_class, 'temperature_image_alttext')){
 	$temperature_image_alttext = $translator_class->temperature_image_alttext;
 }
 

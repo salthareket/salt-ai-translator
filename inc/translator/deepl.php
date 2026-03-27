@@ -28,22 +28,24 @@ class Translator {
     }
 
     public function request($body=[]){
+        $original_body = $body;
         foreach ($this->plugin->options["api_keys"]["deepl"] as $index => $api_key) {
             if (empty($api_key)) continue;
 
-            $body["auth_key"] = $api_key;
+            $request_body = $original_body;
+            $request_body["auth_key"] = $api_key;
 
             $response = wp_remote_post($this->api_url, [
-                'body' => $body,
+                'body' => $request_body,
             ]);
 
             if (is_wp_error($response)) {
                 continue; // WP error varsa diğer key'e geç
             }
 
-            $body = json_decode(wp_remote_retrieve_body($response), true);
-            if (!empty($body['translations'][0]['text'])) {
-                $translated = $body['translations'][0]['text'];
+            $data = json_decode(wp_remote_retrieve_body($response), true);
+            if (!empty($data['translations'][0]['text'])) {
+                $translated = $data['translations'][0]['text'];
                 return str_replace('<x-linebreak>', PHP_EOL, $translated);
             }
 
@@ -97,5 +99,14 @@ class Translator {
 
     private function should_translate($text) {
         return is_string($text) && trim(strip_tags($text)) !== '' && !is_numeric($text);
+    }
+
+    public function generate_alt_text(string $image_url, $to=""): string {
+        // DeepL does not support vision/image analysis — return empty
+        return '';
+    }
+
+    public function set_custom_prompt($prompt = ""){
+        // DeepL does not use custom prompts — noop
     }
 }

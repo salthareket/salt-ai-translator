@@ -239,7 +239,7 @@ class Translator {
         $body = json_encode([
             'model' => $options["model"],
             'messages' => $messages,
-            'temperature' => (float) $options["temperature"] ?? $this->temperature,
+            'temperature' => (float) ($options["temperature"] ?? $this->temperature),
         ]);
 
         return $this->request($body);
@@ -279,7 +279,7 @@ class Translator {
         $body = json_encode([
             'model' => $options["model"],
             'messages' => $messages,
-            'temperature' => (float) $options["temperature"] ?? $this->temperature,
+            'temperature' => (float) ($options["temperature"] ?? $this->temperature),
         ]);
 
         return $this->request($body);
@@ -334,7 +334,7 @@ class Translator {
                     ["type" => "image_url", "image_url" => ["url" => $image_url]]
                 ]
             ]],
-            "temperature" => (float) $options["seo"]["image_alttext"]["temperature"] ?? $this->temperature_image_alttext
+            "temperature" => (float) ($options["seo"]["image_alttext"]["temperature"] ?? $this->temperature_image_alttext)
         ]);
 
         //$this->container->get("plugin")->log($body);

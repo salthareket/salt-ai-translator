@@ -175,11 +175,8 @@ class Integration {
 	                    $acf_field_object = $this->get_acf_field_object($field_key);
 	                    $field_type = $acf_field_object["type"];
 	                   
-						//if ($field_key && (($plugin->options["seo"]["image_alttext"]["generate"] && $this->should_translate($val)) || !$plugin->options["seo"]["image_alttext"]["generate"])){
-						if ($field_key && $plugin->options["seo"]["image_alttext"]["generate"] && !empty($val)){
+						if ($field_key && !empty($val)){
 							
-						    
-                            
                             if($plugin->options["seo"]["image_alttext"]["generate"]){
 							    // 🎯 Alt text gerektiren görselleri yakala
 					            if ($field_type === 'image' && is_numeric($val)) {
@@ -207,7 +204,6 @@ class Integration {
 					                }
 					            }
                             }
-                        }
 
                             $plugin->log($field_type."=".$val);
                             if(isset($acf_field_object["translations"])){
@@ -303,7 +299,6 @@ class Integration {
 	}
 	private function should_translate($text) {
 	    if (!is_string($text) || trim($text) === '' || is_numeric($text)) return false;
-	    if(is_numeric($text) && !$accept_numeric) return false;
 	    if (preg_match('/<!--\s+wp:[^{}]+\{.*\}.*-->/', $text)) return false;
 	    if (strpos($text, '<!-- wp:') !== false && strpos($text, '-->') !== false) return false;
 	    return trim(strip_tags($text)) !== '';
@@ -513,7 +508,6 @@ class Integration {
 
 	    foreach ($taxonomies as $tax) {
 	    	if (in_array($tax, ['language', 'post_translations'], true)) {
-	            error_log("SKIPPING Polylang internal taxonomy: " . $tax);
 	            continue;
 	        }
 	        // Çevrilmesini istemediğimiz taxonomy’leri atla (örn: eklenti ayarlarında belirlenenler)
@@ -703,6 +697,9 @@ class Integration {
 				    //$plugin->log("Generated meta description for: ".$post_default->post_title." -> ".$description);  	
 			    }
 			    if($options["seo"]["meta_desc"]["translate"]){	
+			        if(empty($description)){
+			            $description = $seo->get_meta_description($post_id);
+			        }
 			        if(empty($description)){
 			            $description = $seo->get_meta_description($lang_post_id);
 			        }
@@ -1135,8 +1132,6 @@ class Integration {
 					'menu-item-object-id' => $object_id,
 					'menu-item-status'    => 'publish',
 				];
-
-				error_log(print_r($args, true));
 
 				if ($type === 'custom') {
 					$args['menu-item-url'] = $item->url;
