@@ -18,7 +18,6 @@ use PhpOffice\PhpSpreadsheet\RichText\Run;
  * Version: 1.0.7
  * Author: Tolga Koçak
  * Domain Path: /languages
- * Requires Plugins: advanced-custom-fields
  */
 
 if (!defined('ABSPATH')) exit;
