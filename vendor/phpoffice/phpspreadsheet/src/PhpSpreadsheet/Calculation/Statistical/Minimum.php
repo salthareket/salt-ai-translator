@@ -41,7 +41,6 @@ class Minimum extends MaxMinBase
         if ($returnValue === null) {
             return 0;
         }
-        /** @var float|int|string $returnValue */
 
         return $returnValue;
     }
@@ -80,7 +79,6 @@ class Minimum extends MaxMinBase
         if ($returnValue === null) {
             return 0;
         }
-        /** @var float|int|string $returnValue */
 
         return $returnValue;
     }

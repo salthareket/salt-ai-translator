@@ -1,112 +1,162 @@
 <?php
+namespace SAT\Translator;
 
-namespace SaltAI\Translator;
+class DeepL extends AbstractTranslator {
 
-use SaltAI\Core\ServiceContainer;
+    private string $apiUrl     = 'https://api.deepl.com/v2/translate';
+    private string $freeApiUrl = 'https://api-free.deepl.com/v2/translate';
 
-//Translator name: Deepl (Free)
+    private array $supportedLangs = [
+        'BG'=>'Bulgarian','CS'=>'Czech','DA'=>'Danish','DE'=>'German',
+        'EL'=>'Greek','EN-GB'=>'English (UK)','EN-US'=>'English (US)',
+        'ES'=>'Spanish','ET'=>'Estonian','FI'=>'Finnish','FR'=>'French',
+        'HU'=>'Hungarian','ID'=>'Indonesian','IT'=>'Italian','JA'=>'Japanese',
+        'KO'=>'Korean','LT'=>'Lithuanian','LV'=>'Latvian','NB'=>'Norwegian',
+        'NL'=>'Dutch','PL'=>'Polish','PT-BR'=>'Portuguese (Brazil)',
+        'PT-PT'=>'Portuguese (Portugal)','RO'=>'Romanian','RU'=>'Russian',
+        'SK'=>'Slovak','SL'=>'Slovenian','SV'=>'Swedish','TR'=>'Turkish',
+        'UK'=>'Ukrainian','ZH'=>'Chinese',
+    ];
 
-class Translator {
-    private ServiceContainer $container;
-    private $plugin;
-    public $formalities;
-    public $formality;
-    private $api_url;
+    public function getName(): string    { return 'deepl'; }
+    public function supportsVision(): bool { return false; }
+    public function supportsBatch(): bool  { return true; }
 
-    public function __construct($container) {
-        $this->container = $container;
-        $this->plugin = $container->get('plugin');
-        $this->formalities = [
-            'default' => __('Let DeepL decide the tone (default)', 'salt-ai-translator'),
-            'more' => __('Use a more formal and respectful tone (e.g. business language)', 'salt-ai-translator'),
-            'less' => __('Use a more casual and friendly tone (e.g. for friends)', 'salt-ai-translator'),
-            'prefer_more' => __('Prefer formal tone when ambiguous', 'salt-ai-translator'),
-            'prefer_less' => __('Prefer informal tone when ambiguous', 'salt-ai-translator'),
+    public function getModels(): array {
+        return [
+            'default' => ['name' => 'DeepL Default', 'input' => 0.000025, 'output' => 0],
         ];
-        $this->formality = 'default';
-        $this->api_url = 'https://api-free.deepl.com/v2/translate';
     }
 
-    public function request($body=[]){
-        $original_body = $body;
-        foreach ($this->plugin->options["api_keys"]["deepl"] as $index => $api_key) {
-            if (empty($api_key)) continue;
-
-            $request_body = $original_body;
-            $request_body["auth_key"] = $api_key;
-
-            $response = wp_remote_post($this->api_url, [
-                'body' => $request_body,
-            ]);
-
-            if (is_wp_error($response)) {
-                continue; // WP error varsa diğer key'e geç
-            }
-
-            $data = json_decode(wp_remote_retrieve_body($response), true);
-            if (!empty($data['translations'][0]['text'])) {
-                $translated = $data['translations'][0]['text'];
-                return str_replace('<x-linebreak>', PHP_EOL, $translated);
-            }
-
-        }
-        return __('All API keys failed. Please check your configuration.', 'salt-ai-translator');
+    public function getLanguages(): array {
+        return $this->supportedLangs;
     }
 
-    public function translate($text = "", $to = 'EN') {
-        if (!is_string($text) || trim($text) === '' || !$this->should_translate($text) || empty($text) || empty($this->plugin->options["api_keys"]["deepl"])) return $text;
-        $text = str_replace(["\r\n", "\n", "\r"], '<x-linebreak>', $text);
+    public function translate(string $text, string $lang, string $customPrompt = ''): string {
+        if (!$this->shouldTranslate($text)) return $text;
+
+        $keys = $this->getApiKeys();
+        if (empty($keys)) throw new \RuntimeException('DeepL: No API keys configured');
+
+        $targetLang = strtoupper($lang);
+        $formality  = $this->options['deepl_formality'] ?? 'default';
+
         $body = [
-                    //'auth_key' => $key,
-                    'text' => $text,
-                    'target_lang' => strtoupper($to),
-                    'tag_handling' => 'html',
-                    'preserve_formatting' => 1,
+            'text'        => [$text],
+            'target_lang' => $targetLang,
+            'tag_handling'=> 'html',
         ];
-        return $this->request($body);
-    }
 
-    public function quota_info($keys = []) {
-        if (empty($keys)) return [];
+        if (in_array($targetLang, ['DE','FR','ES','IT','NL','PL','PT-BR','PT-PT','RU'])) {
+            $body['formality'] = $formality;
+        }
 
-        $results = [];
+        $lastError = 'Unknown error';
         foreach ($keys as $key) {
-            $test = wp_remote_post('https://api-free.deepl.com/v2/usage', [
-                'body' => ['auth_key' => $key],
+            $url = str_ends_with(trim($key), ':fx') ? $this->freeApiUrl : $this->apiUrl;
+            $res = $this->httpPost($url, [
+                'headers' => [
+                    'Authorization' => 'DeepL-Auth-Key ' . trim($key),
+                    'Content-Type'  => 'application/json',
+                ],
+                'body'    => json_encode($body),
+                'timeout' => 30,
             ]);
 
-            if (is_wp_error($test)) {
-                $results[] = __('API error – ', 'salt-ai-translator') . $test->get_error_message();
+            if ($res['error'] || $res['code'] === 0) {
+                $lastError = $res['error'] ?? 'Network error';
                 continue;
             }
 
-            $body = json_decode(wp_remote_retrieve_body($test), true);
-            if (isset($body['character_count'])) {
-                $percent = round(($body['character_count'] / $body['character_limit']) * 100, 2);
-                $results[] = sprintf(
-                    __('Valid – %s%% used (%d/%d)', 'salt-ai-translator'),
-                    $percent,
-                    $body['character_count'],
-                    $body['character_limit']
-                );
-            } else {
-                $results[] = __('API error – No response received.', 'salt-ai-translator');
+            $code = $res['code'];
+            $data = json_decode($res['body'], true);
+
+            if ($code === 200 && isset($data['translations'][0]['text'])) {
+                return $data['translations'][0]['text'];
             }
+
+            $lastError = 'HTTP ' . $code . ': ' . ($data['message'] ?? 'Unknown error');
         }
 
+        throw new \RuntimeException('DeepL API error: ' . $lastError);
+    }
+
+    public function translateBatch(array $texts, string $lang): array {
+        $keys = $this->getApiKeys();
+        if (empty($keys)) return $texts;
+
+        $targetLang = strtoupper($lang);
+        $key        = reset($keys);
+        $url        = str_ends_with(trim($key), ':fx') ? $this->freeApiUrl : $this->apiUrl;
+
+        $response = wp_remote_post($url, [
+            'headers' => [
+                'Authorization' => 'DeepL-Auth-Key ' . trim($key),
+                'Content-Type'  => 'application/json',
+            ],
+            'body'    => json_encode(['text' => array_values($texts), 'target_lang' => $targetLang, 'tag_handling' => 'html']),
+            'timeout' => 60,
+        ]);
+
+        if (is_wp_error($response)) return $texts;
+
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        if (empty($data['translations'])) return $texts;
+
+        $results = [];
+        $keys_arr = array_keys($texts);
+        foreach ($data['translations'] as $i => $t) {
+            $results[$keys_arr[$i]] = $t['text'];
+        }
         return $results;
     }
 
-    private function should_translate($text) {
-        return is_string($text) && trim(strip_tags($text)) !== '' && !is_numeric($text);
+    public function generateAltText(string $imageUrl, string $lang): string {
+        return ''; // DeepL cannot analyze images
     }
 
-    public function generate_alt_text(string $image_url, $to=""): string {
-        // DeepL does not support vision/image analysis — return empty
-        return '';
+    public function generateMetaDescription(string $title, string $content, string $lang): string {
+        return ''; // DeepL cannot generate content, only translate
     }
 
-    public function set_custom_prompt($prompt = ""){
-        // DeepL does not use custom prompts — noop
+    public function estimateCost(string $text, string $model = ''): float {
+        $chars = strlen(strip_tags($text));
+        return $chars * 0.000025; // $25 per 1M chars
+    }
+
+    public function getCostPerToken(string $model = ''): float {
+        return 0.000025; // per character
+    }
+
+    public function getRemainingCredits(): array {
+        $keys = $this->getApiKeys();
+        if (empty($keys)) return ['error' => 'No API keys'];
+
+        $key = reset($keys);
+        $url = str_ends_with(trim($key), ':fx')
+            ? 'https://api-free.deepl.com/v2/usage'
+            : 'https://api.deepl.com/v2/usage';
+
+        $response = wp_remote_get($url, [
+            'headers' => ['Authorization' => 'DeepL-Auth-Key ' . trim($key)],
+            'timeout' => 10,
+        ]);
+
+        if (is_wp_error($response)) return ['error' => $response->get_error_message()];
+
+        $data = json_decode(wp_remote_retrieve_body($response), true);
+        if (empty($data)) return ['error' => 'Invalid response'];
+
+        $used      = $data['character_count'] ?? 0;
+        $limit     = $data['character_limit'] ?? 0;
+        $remaining = max(0, $limit - $used);
+
+        return [
+            'characters_used'      => $used,
+            'characters_limit'     => $limit,
+            'characters_remaining' => $remaining,
+            'balance_usd'          => $remaining * 0.000025,
+            'percent_used'         => $limit > 0 ? round(($used / $limit) * 100, 1) : 0,
+        ];
     }
 }

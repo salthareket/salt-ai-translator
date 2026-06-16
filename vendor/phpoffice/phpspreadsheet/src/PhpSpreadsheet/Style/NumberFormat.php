@@ -109,15 +109,11 @@ class NumberFormat extends Supervisor
 
     /**
      * Excel built-in number formats.
-     *
-     * @var string[]
      */
     protected static array $builtInFormats;
 
     /**
      * Excel built-in number formats (flipped, for faster lookups).
-     *
-     * @var int[]
      */
     protected static array $flippedBuiltInFormats;
 
@@ -168,10 +164,6 @@ class NumberFormat extends Supervisor
 
     /**
      * Build style array from subcomponents.
-     *
-     * @param mixed[] $array
-     *
-     * @return array{numberFormat: mixed[]}
      */
     public function getStyleArray(array $array): array
     {
@@ -189,7 +181,7 @@ class NumberFormat extends Supervisor
      * );
      * </code>
      *
-     * @param string[] $styleArray Array containing style information
+     * @param array $styleArray Array containing style information
      *
      * @return $this
      */
@@ -466,7 +458,7 @@ class NumberFormat extends Supervisor
      * @param null|bool|float|int|RichText|string $value Value to format
      * @param string $format Format code: see = self::FORMAT_* for predefined values;
      *                          or can be any valid MS Excel custom format string
-     * @param ?mixed[] $callBack Callback function for additional formatting of string
+     * @param ?array $callBack Callback function for additional formatting of string
      *
      * @return string Formatted string
      */
@@ -475,7 +467,6 @@ class NumberFormat extends Supervisor
         return NumberFormat\Formatter::toFormattedString($value, $format, $callBack);
     }
 
-    /** @return mixed[] */
     protected function exportArray1(): array
     {
         $exportedArray = [];

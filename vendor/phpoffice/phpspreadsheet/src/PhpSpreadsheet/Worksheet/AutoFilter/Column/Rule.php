@@ -330,7 +330,8 @@ class Rule
     {
         $this->setEvaluatedFalse();
         if (
-            (!in_array($grouping, self::DATE_TIME_GROUPS))
+            ($grouping !== null)
+            && (!in_array($grouping, self::DATE_TIME_GROUPS))
             && (!in_array($grouping, self::DYNAMIC_TYPES))
             && (!in_array($grouping, self::TOP_TEN_TYPE))
         ) {

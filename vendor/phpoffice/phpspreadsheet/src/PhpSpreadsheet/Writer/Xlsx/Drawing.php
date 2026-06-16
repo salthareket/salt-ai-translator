@@ -2,7 +2,6 @@
 
 namespace PhpOffice\PhpSpreadsheet\Writer\Xlsx;
 
-use Composer\Pcre\Preg;
 use PhpOffice\PhpSpreadsheet\Cell\Coordinate;
 use PhpOffice\PhpSpreadsheet\Reader\Xlsx\Namespaces;
 use PhpOffice\PhpSpreadsheet\Shared\Drawing as SharedDrawing;
@@ -68,7 +67,6 @@ class Drawing extends WriterPart
         }
 
         // unparsed AlternateContent
-        /** @var string[][][][] */
         $unparsedLoadedData = $worksheet->getParentOrThrow()->getUnparsedLoadedData();
         if (isset($unparsedLoadedData['sheets'][$worksheet->getCodeName()]['drawingAlternateContents'])) {
             foreach ($unparsedLoadedData['sheets'][$worksheet->getCodeName()]['drawingAlternateContents'] as $drawingAlternateContent) {
@@ -265,13 +263,7 @@ class Drawing extends WriterPart
             $objWriter->startElement('a:blip');
             $objWriter->writeAttribute('xmlns:r', Namespaces::SCHEMA_OFFICE_DOCUMENT);
             $objWriter->writeAttribute('r:embed', 'rId' . $relationId);
-            $temp = $drawing->getOpacity();
-            if (is_int($temp) && $temp >= 0 && $temp <= 100000) {
-                $objWriter->startElement('a:alphaModFix');
-                $objWriter->writeAttribute('amt', "$temp");
-                $objWriter->endElement(); // a:alphaModFix
-            }
-            $objWriter->endElement(); // a:blip
+            $objWriter->endElement();
 
             $srcRect = $drawing->getSrcRect();
             if (!empty($srcRect)) {
@@ -509,11 +501,7 @@ class Drawing extends WriterPart
     private function writeVMLHeaderFooterImage(XMLWriter $objWriter, string $reference, HeaderFooterDrawing $image): void
     {
         // Calculate object id
-        if (!Preg::isMatch('{(\d+)}', md5($reference), $m)) {
-            // @codeCoverageIgnoreStart
-            throw new WriterException('Regexp failure in writeVMLHeaderFooterImage');
-            // @codeCoverageIgnoreEnd
-        }
+        preg_match('{(\d+)}', md5($reference), $m);
         $id = 1500 + ((int) substr($m[1], 0, 2) * 1);
 
         // Calculate offset

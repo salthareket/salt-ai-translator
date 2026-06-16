@@ -15,6 +15,9 @@ class Border extends StyleBase
         'right',
     ];
 
+    /**
+     * @var array
+     */
     public const BORDER_MAPPINGS = [
         'borderStyle' => [
             'continuous' => BorderStyle::BORDER_HAIR,
@@ -50,11 +53,6 @@ class Border extends StyleBase
         ],
     ];
 
-    /**
-     * @param string[] $namespaces
-     *
-     * @return mixed[]
-     */
     public function parseStyle(SimpleXMLElement $styleData, array $namespaces): array
     {
         $style = [];
@@ -72,7 +70,6 @@ class Border extends StyleBase
                 $borderStyleValue = (string) $borderStyleValuex;
                 switch ($borderStyleKey) {
                     case 'Position':
-                        /** @var string $diagonalDirection */
                         [$borderPosition, $diagonalDirection]
                             = $this->parsePosition($borderStyleValue, $diagonalDirection);
 
@@ -96,7 +93,6 @@ class Border extends StyleBase
         return $style;
     }
 
-    /** @return mixed[] */
     protected function parsePosition(string $borderStyleValue, string $diagonalDirection): array
     {
         $borderStyleValue = strtolower($borderStyleValue);

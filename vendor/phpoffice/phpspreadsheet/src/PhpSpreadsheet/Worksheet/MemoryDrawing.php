@@ -33,8 +33,6 @@ class MemoryDrawing extends BaseDrawing
 
     /**
      * Rendering function.
-     *
-     * @var callable-string
      */
     private string $renderingFunction;
 
@@ -127,6 +125,9 @@ class MemoryDrawing extends BaseDrawing
     public static function fromStream($imageStream): self
     {
         $streamValue = stream_get_contents($imageStream);
+        if ($streamValue === false) {
+            throw new Exception('Unable to read data from stream');
+        }
 
         return self::fromString($streamValue);
     }
@@ -157,7 +158,6 @@ class MemoryDrawing extends BaseDrawing
         return $drawing;
     }
 
-    /** @return callable-string */
     private static function identifyRenderingFunction(string $mimeType): string
     {
         return match ($mimeType) {
@@ -258,8 +258,6 @@ class MemoryDrawing extends BaseDrawing
 
     /**
      * Get rendering function.
-     *
-     * @return callable-string
      */
     public function getRenderingFunction(): string
     {
@@ -269,7 +267,7 @@ class MemoryDrawing extends BaseDrawing
     /**
      * Set rendering function.
      *
-     * @param callable-string $value see self::RENDERING_*
+     * @param string $value see self::RENDERING_*
      *
      * @return $this
      */

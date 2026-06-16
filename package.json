@@ -1,0 +1,12 @@
+{
+  "name": "salt-ai-translator",
+  "version": "2.0.1",
+  "description": "Salt AI Translator WordPress Plugin - Admin Assets",
+  "private": true,
+  "scripts": {
+    "install-assets": "node scripts/copy-assets.js"
+  },
+  "dependencies": {
+    "select2": "^4.0.13"
+  }
+}

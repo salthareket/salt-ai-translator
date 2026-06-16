@@ -351,11 +351,7 @@ abstract class BestFit
         }
     }
 
-    /**
-     * @param array<float|int> $values
-     *
-     * @return float|int
-     */
+    /** @return float|int */
     private function sumSquares(array $values)
     {
         return array_sum(

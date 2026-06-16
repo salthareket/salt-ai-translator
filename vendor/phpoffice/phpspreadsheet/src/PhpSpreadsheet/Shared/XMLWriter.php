@@ -60,7 +60,8 @@ class XMLWriter extends \XMLWriter
         }
     }
 
-    public function __wakeup(): void
+    /** @param mixed[] $data */
+    public function __unserialize(array $data): void
     {
         $this->tempFileName = '';
 
@@ -91,6 +92,6 @@ class XMLWriter extends \XMLWriter
             $rawTextData = implode("\n", $rawTextData);
         }
 
-        return $this->text($rawTextData ?? '');
+        return $this->writeRaw(htmlspecialchars($rawTextData ?? ''));
     }
 }

@@ -8,14 +8,9 @@ abstract class DateTimeWizard implements Stringable, Wizard
 {
     protected const NO_ESCAPING_NEEDED = "$+-/():!^&'~{}<>= ";
 
-    /**
-     * @param string[] $separators
-     *
-     * @return string[]
-     */
     protected function padSeparatorArray(array $separators, int $count): array
     {
-        $lastSeparator = (string) array_pop($separators);
+        $lastSeparator = array_pop($separators);
 
         return $separators + array_fill(0, $count, $lastSeparator);
     }

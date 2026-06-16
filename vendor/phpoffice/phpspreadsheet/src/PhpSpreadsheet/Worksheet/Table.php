@@ -64,7 +64,7 @@ class Table implements Stringable
     /**
      * Create a new Table.
      *
-     * @param AddressRange<CellAddress>|AddressRange<int>|AddressRange<string>|array{0: int, 1: int, 2: int, 3: int}|array{0: int, 1: int}|string $range
+     * @param AddressRange<CellAddress>|array{0: int, 1: int, 2: int, 3: int}|array{0: int, 1: int}|string $range
      *            A simple string containing a Cell range like 'A1:E10' is permitted
      *              or passing in an array of [$fromColumnIndex, $fromRow, $toColumnIndex, $toRow] (e.g. [3, 5, 6, 8]),
      *              or an AddressRange object.
@@ -268,7 +268,7 @@ class Table implements Stringable
     /**
      * Set Table Cell Range.
      *
-     * @param AddressRange<CellAddress>|AddressRange<int>|AddressRange<string>|array{0: int, 1: int, 2: int, 3: int}|array{0: int, 1: int}|string $range
+     * @param AddressRange<CellAddress>|array{0: int, 1: int, 2: int, 3: int}|array{0: int, 1: int}|string $range
      *            A simple string containing a Cell range like 'A1:E10' is permitted
      *              or passing in an array of [$fromColumnIndex, $fromRow, $toColumnIndex, $toRow] (e.g. [3, 5, 6, 8]),
      *              or an AddressRange object.
@@ -442,7 +442,7 @@ class Table implements Stringable
     {
         if ((is_string($columnObjectOrString)) && (!empty($columnObjectOrString))) {
             $column = $columnObjectOrString;
-        } elseif ($columnObjectOrString instanceof Table\Column) {
+        } elseif (is_object($columnObjectOrString) && ($columnObjectOrString instanceof Table\Column)) {
             $column = $columnObjectOrString->getColumnIndex();
         } else {
             throw new PhpSpreadsheetException('Column is not within the table range.');
@@ -491,7 +491,7 @@ class Table implements Stringable
         $fromColumn = strtoupper($fromColumn);
         $toColumn = strtoupper($toColumn);
 
-        if (isset($this->columns[$fromColumn])) {
+        if (($fromColumn !== null) && (isset($this->columns[$fromColumn])) && ($toColumn !== null)) {
             $this->columns[$fromColumn]->setTable();
             $this->columns[$fromColumn]->setColumnIndex($toColumn);
             $this->columns[$toColumn] = $this->columns[$fromColumn];
@@ -541,19 +541,6 @@ class Table implements Stringable
     }
 
     /**
-     * Get the row number on this table for given coordinates.
-     */
-    public function getRowNumber(string $coordinate): int
-    {
-        $range = $this->getRange();
-        $coords = Coordinate::splitRange($range);
-        $firstCell = Coordinate::coordinateFromString($coords[0][0]);
-        $thisCell = Coordinate::coordinateFromString($coordinate);
-
-        return (int) $thisCell[1] - (int) $firstCell[1];
-    }
-
-    /**
      * Implement PHP __clone to create a deep clone, not just a shallow copy.
      */
     public function __clone()
@@ -571,7 +558,6 @@ class Table implements Stringable
                 //    The columns array of \PhpOffice\PhpSpreadsheet\Worksheet\Worksheet\Table objects
                 $this->{$key} = [];
                 foreach ($value as $k => $v) {
-                    /** @var Table\Column $v */
                     $this->{$key}[$k] = clone $v;
                     // attach the new cloned Column to this new cloned Table object
                     $this->{$key}[$k]->setTable($this);

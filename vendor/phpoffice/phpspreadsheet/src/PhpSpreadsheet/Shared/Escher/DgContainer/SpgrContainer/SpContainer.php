@@ -33,8 +33,6 @@ class SpContainer
 
     /**
      * Array of options.
-     *
-     * @var mixed[]
      */
     private array $OPT = [];
 
@@ -174,8 +172,6 @@ class SpContainer
 
     /**
      * Get the collection of options.
-     *
-     * @return mixed[]
      */
     public function getOPTCollection(): array
     {

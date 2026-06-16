@@ -1,6 +1,15 @@
 {
+    "name": "salthareket/salt-ai-translator",
+    "description": "Pro-level AI translation plugin for WordPress",
+    "type": "wordpress-plugin",
     "require": {
-        "phpoffice/phpword": "^1.4",
-        "phpoffice/phpspreadsheet": "^5.1"
+        "php": ">=8.0",
+        "phpoffice/phpspreadsheet": "^2.0",
+        "woocommerce/action-scheduler": "^3.7"
+    },
+    "autoload": {
+        "psr-4": {
+            "SAT\\": "inc/"
+        }
     }
 }

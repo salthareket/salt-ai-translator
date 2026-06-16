@@ -132,12 +132,6 @@ class BaseDrawing implements IComparable
     protected $srcRect = [];
 
     /**
-     * Percentage multiplied by 100,000, e.g. 40% = 40,000.
-     * Opacity=x is the same as transparency=100000-x.
-     */
-    protected ?int $opacity = null;
-
-    /**
      * Create a new BaseDrawing.
      */
     public function __construct()
@@ -358,12 +352,9 @@ class BaseDrawing implements IComparable
      */
     public function setWidthAndHeight(int $width, int $height): self
     {
-        if ($this->width === 0 || $this->height === 0 || $width === 0 || $height === 0 || !$this->resizeProportional) {
-            $this->width = $width;
-            $this->height = $height;
-        } else {
-            $xratio = $width / $this->width;
-            $yratio = $height / $this->height;
+        $xratio = $width / ($this->width != 0 ? $this->width : 1);
+        $yratio = $height / ($this->height != 0 ? $this->height : 1);
+        if ($this->resizeProportional && !($width == 0 || $height == 0)) {
             if (($xratio * $this->height) < $height) {
                 $this->height = (int) ceil($xratio * $this->height);
                 $this->width = $width;
@@ -371,6 +362,9 @@ class BaseDrawing implements IComparable
                 $this->width = (int) ceil($yratio * $this->width);
                 $this->height = $height;
             }
+        } else {
+            $this->width = $width;
+            $this->height = $height;
         }
 
         return $this;
@@ -422,7 +416,7 @@ class BaseDrawing implements IComparable
         return md5(
             $this->name
             . $this->description
-            . (($this->worksheet === null) ? '' : (string) $this->worksheet->getHashInt())
+            . (($this->worksheet === null) ? '' : (string) spl_object_id($this->worksheet))
             . $this->coordinates
             . $this->offsetX
             . $this->offsetY
@@ -559,17 +553,5 @@ class BaseDrawing implements IComparable
     public function getFlipVertical(): bool
     {
         return $this->flipVertical;
-    }
-
-    public function setOpacity(?int $opacity): self
-    {
-        $this->opacity = $opacity;
-
-        return $this;
-    }
-
-    public function getOpacity(): ?int
-    {
-        return $this->opacity;
     }
 }
