@@ -31,6 +31,9 @@ class Plugin {
 
         if (is_admin() || (defined('DOING_AJAX') && DOING_AJAX)) {
             (new \SAT\Admin\AdminController($this->container))->register();
+        } else {
+            // Frontend — sadece admin bar + inline translate hook'larına ihtiyaç var
+            (new \SAT\Admin\AdminController($this->container))->registerFrontend();
         }
 
         // Cron hooks

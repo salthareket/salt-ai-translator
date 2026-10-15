@@ -20,10 +20,29 @@ class AdminController {
         add_action('add_meta_boxes',         [$this, 'registerMetaBoxes']);
         add_action('admin_head',             [$this, 'hideNotices']);
         add_action('admin_notices',          [$this, 'showAutoTranslateNotice']);
+        add_action('admin_notices',          [$this, 'showPageBuilderNotice']);
 
-        // AJAX handlers
+        // Admin panelinde de admin bar göster
+        add_action('admin_bar_menu', [$this, 'addAdminBarItems'], 100);
+
+        // AJAX handlers (hem admin hem frontend AJAX)
         $ajax = new AjaxHandler($this->container);
         $ajax->register();
+    }
+
+    /**
+     * Sadece frontend için — admin bar + inline translate + AJAX endpoint'leri.
+     * Admin panel hook'ları (menu, metabox, settings) kaydedilmez.
+     */
+    public function registerFrontend(): void {
+        add_action('admin_bar_menu',     [$this, 'addAdminBarItems'], 100);
+        add_action('wp_enqueue_scripts', [$this, 'enqueueFrontendAssets']);
+
+        // Frontend AJAX — sat_inline_translate + sat_inline_translate_page
+        // (wp_ajax_* hem admin hem frontend'de çalışır, login kullanıcı gerektirir)
+        $ajax = new AjaxHandler($this->container);
+        add_action('wp_ajax_sat_inline_translate',      [$ajax, 'inlineTranslate']);
+        add_action('wp_ajax_sat_inline_translate_page', [$ajax, 'inlineTranslatePage']);
     }
 
     public function showAutoTranslateNotice(): void {
@@ -46,6 +65,90 @@ class AdminController {
             </div>
         </div>
         <?php
+    }
+
+    /**
+     * Page builder version uyarısı.
+     * Desteklenen ama minimum versiyonun altındaki builder'lar için admin notice gösterir.
+     * Sadece SAT admin sayfalarında görünür.
+     */
+    public function showPageBuilderNotice(): void {
+        // Sadece SAT sayfalarında göster
+        $page = sanitize_key($_GET['page'] ?? '');
+        if (!str_starts_with($page, 'sat')) return;
+
+        // Minimum versiyon gereksinimleri
+        $builders = [
+            'elementor' => [
+                'label'   => 'Elementor',
+                'check'   => fn() => defined('ELEMENTOR_VERSION') ? ELEMENTOR_VERSION : null,
+                'min'     => '3.0.0',
+                'color'   => '#e2006a',
+            ],
+            'bricks' => [
+                'label'   => 'Bricks Builder',
+                'check'   => fn() => defined('BRICKS_VERSION') ? BRICKS_VERSION : null,
+                'min'     => '1.5.0',
+                'color'   => '#dd6b20',
+            ],
+            'divi' => [
+                'label'   => 'Divi',
+                'check'   => fn() => defined('ET_BUILDER_VERSION') ? ET_BUILDER_VERSION
+                             : (defined('ET_BUILDER_PLUGIN_VERSION') ? ET_BUILDER_PLUGIN_VERSION : null),
+                'min'     => '4.0.0',
+                'color'   => '#7c3aed',
+            ],
+            'beaver' => [
+                'label'   => 'Beaver Builder',
+                'check'   => fn() => defined('FL_BUILDER_VERSION') ? FL_BUILDER_VERSION : null,
+                'min'     => '2.0.0',
+                'color'   => '#f59e0b',
+            ],
+            'oxygen' => [
+                'label'   => 'Oxygen Builder',
+                'check'   => fn() => defined('CT_VERSION') ? CT_VERSION : null,
+                'min'     => '3.9.0',
+                'color'   => '#0ea5e9',
+            ],
+            'wpbakery' => [
+                'label'   => 'WPBakery',
+                'check'   => fn() => defined('WPB_VC_VERSION') ? WPB_VC_VERSION : null,
+                'min'     => '6.0.0',
+                'color'   => '#64748b',
+            ],
+        ];
+
+        $warnings = [];
+
+        foreach ($builders as $key => $cfg) {
+            $version = ($cfg['check'])();
+            if ($version === null) continue; // Plugin yüklü değil — skip
+
+            if (version_compare($version, $cfg['min'], '<')) {
+                $warnings[] = sprintf(
+                    '<span style="display:inline-flex;align-items:center;gap:6px;background:%s;color:#fff;padding:2px 8px;border-radius:4px;font-size:12px;margin-right:6px;">%s</span> v%s detected — minimum required: <strong>v%s</strong>. Translation may be incomplete.',
+                    esc_attr($cfg['color']),
+                    esc_html($cfg['label']),
+                    esc_html($version),
+                    esc_html($cfg['min'])
+                );
+            }
+        }
+
+        if (empty($warnings)) return;
+
+        echo '<div class="notice notice-warning is-dismissible" style="border-left-color:#f59e0b;padding:10px 14px;">';
+        echo '<p><strong>⚠️ Salt AI Translator — Page Builder Compatibility:</strong></p>';
+        echo '<ul style="margin:6px 0 0 12px;list-style:disc;">';
+        foreach ($warnings as $w) {
+            echo '<li style="margin-bottom:4px;">' . wp_kses($w, [
+                'span'   => ['style' => [], 'title' => []],
+                'strong' => [],
+                'em'     => [],
+            ]) . '</li>';
+        }
+        echo '</ul>';
+        echo '</div>';
     }
 
     public function registerMenus(): void {
@@ -311,5 +414,150 @@ class AdminController {
 
         $file = SAT_DIR . "admin/views/{$view}.php";
         if (file_exists($file)) include $file;
+    }
+
+    // =========================================================
+    //  FRONTEND — Admin Bar + Inline Translate
+    // =========================================================
+
+    /**
+     * Admin bar'a "Translate Page" ve "Inline Mode" item'larını ekler.
+     * Sadece edit_posts yetkisi olan login kullanıcılar için.
+     */
+    public function addAdminBarItems(\WP_Admin_Bar $bar): void {
+        // Sadece frontend'de göster — admin panelinde değil
+        if (is_admin()) return;
+        if (!is_user_logged_in() || !current_user_can('edit_posts')) return;
+
+        $integration = $this->container->get('integration');
+        if (!$integration) return;
+
+        $languages  = $integration->getLanguages();
+        $sourceLang = $integration->getDefaultLanguage();
+
+        // Target diller — source hariç
+        $targetLangs = array_filter($languages, fn($code) => $code !== $sourceLang, ARRAY_FILTER_USE_KEY);
+
+        if (empty($targetLangs)) return;
+
+        // Post ID — sadece "Translate Page" için gerekli (olmayabilir — archive/taxonomy gibi sayfalarda yok)
+        $postId = $this->getCurrentFrontendPostId();
+
+        // Eğer çeviri sayfasındaysak kaynak post'u bul
+        if ($postId && function_exists('pll_get_post_language')) {
+            $postLang = pll_get_post_language($postId);
+            if ($postLang && $postLang !== $sourceLang) {
+                $sourceId = $integration->getPostTranslation($postId, $sourceLang);
+                if ($sourceId) $postId = $sourceId;
+            }
+        }
+
+        // ── Ana SAT group node ──
+        $bar->add_node([
+            'id'    => 'sat-group',
+            'title' => '🌐 SAT',
+            'href'  => '#',
+            'meta'  => ['class' => 'sat-ab-group'],
+        ]);
+
+        // ── Translate Page node — sadece post ID varsa ──
+        if ($postId) {
+            $bar->add_node([
+                'id'     => 'sat-translate-page',
+                'parent' => 'sat-group',
+                'title'  => '📄 Translate Page',
+                'href'   => '#',
+                'meta'   => ['class' => 'sat-ab-node'],
+            ]);
+
+            foreach ($targetLangs as $code => $label) {
+                $bar->add_node([
+                    'id'     => 'sat-translate-page-' . $code,
+                    'parent' => 'sat-translate-page',
+                    'title'  => '→ ' . esc_html($label) . ' (' . strtoupper($code) . ')',
+                    'href'   => '#',
+                    'meta'   => ['class' => 'sat-ab-translate-lang'],
+                ]);
+            }
+        }
+
+        // ── Inline Mode toggle — her sayfada göster ──
+        $bar->add_node([
+            'id'     => 'sat-inline-mode',
+            'parent' => 'sat-group',
+            'title'  => '✏️ Inline Mode',
+            'href'   => '#',
+            'meta'   => ['class' => 'sat-ab-node'],
+        ]);
+    }
+
+    /**
+     * Frontend CSS + JS enqueue (admin login + frontend sayfalarında)
+     */
+    public function enqueueFrontendAssets(): void {
+        if (is_admin()) return;
+        if (!is_user_logged_in() || !current_user_can('edit_posts')) return;
+        if (!is_admin_bar_showing()) return;
+
+        $integration = $this->container->get('integration');
+        if (!$integration) return;
+
+        $languages  = $integration->getLanguages();
+        $sourceLang = $integration->getDefaultLanguage();
+
+        // Target diller listesi — JS'e geçirilecek
+        $langs = [];
+        foreach ($languages as $code => $label) {
+            if ($code === $sourceLang) continue;
+            $langs[] = ['code' => $code, 'label' => $label];
+        }
+
+        if (empty($langs)) return;
+
+        // Post ID — singular/frontpage'de Translate Page çalışır
+        // Archive/taxonomy sayfalarında post_id=0, sadece Inline Mode çalışır
+        $postId = $this->getCurrentFrontendPostId();
+
+        wp_enqueue_style(
+            'sat-frontend-translate',
+            SAT_URL . 'assets/css/frontend-translate.css',
+            [],
+            SAT_VERSION
+        );
+
+        wp_enqueue_script(
+            'sat-frontend-translate',
+            SAT_URL . 'assets/js/frontend-translate.js',
+            [],
+            SAT_VERSION,
+            true // footer
+        );
+
+        wp_localize_script('sat-frontend-translate', 'satFrontend', [
+            'nonce'      => wp_create_nonce('sat_nonce'),
+            'ajaxUrl'    => admin_url('admin-ajax.php'),
+            'postId'     => $postId,
+            'sourceLang' => $sourceLang,
+            'langs'      => $langs,
+        ]);
+    }
+
+    /**
+     * Mevcut frontend sayfasının post ID'sini döndürür.
+     * Çeviri sayfasındaysa kaynak post ID'sini döndürür.
+     */
+    private function getCurrentFrontendPostId(): int {
+        if (is_admin()) return 0;
+
+        // Singular post/page
+        if (is_singular()) {
+            $id = get_queried_object_id();
+            return $id > 0 ? $id : 0;
+        }
+        // Front page — statik sayfa ise
+        if (is_front_page() && get_option('show_on_front') === 'page') {
+            return (int) get_option('page_on_front');
+        }
+        return 0;
     }
 }

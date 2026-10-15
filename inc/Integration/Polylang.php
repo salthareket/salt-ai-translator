@@ -177,11 +177,18 @@ class Polylang extends AbstractIntegration {
                 : $this->translateText($source->post_title, $lang,
                     "This is a page/post title for post type '{$source->post_type}'. Translate naturally.");
 
-            // Translate content
+            // Translate content — page builder detection first
             $translator && method_exists($translator, 'setContext') && $translator->setContext(['field_name' => 'content']);
-            $content = has_blocks($source->post_content)
-                ? $this->translateBlocks($source->post_content, $lang)
-                : $this->translateText($source->post_content, $lang);
+            $pageBuilder = \SAT\Content\PageBuilderTranslator::detect($postId);
+            if ($pageBuilder) {
+                // Page builder içeriği ayrıca işlenecek — post_content'e dokunma
+                // (Elementor/Bricks kendi meta'larına yazar, Divi/WPBakery post_content'e)
+                $content = $source->post_content; // değiştirilmeden kopyala
+            } elseif (has_blocks($source->post_content)) {
+                $content = $this->translateBlocks($source->post_content, $lang);
+            } else {
+                $content = $this->translateText($source->post_content, $lang);
+            }
 
             // Translate excerpt
             $excerpt = '';
@@ -210,6 +217,12 @@ class Polylang extends AbstractIntegration {
             $acfFields = $this->translateAcfFields($postId, $lang);
             foreach ($acfFields as $key => $value) {
                 update_field($key, $value, $translatedId);
+            }
+
+            // Page builder meta çevirisi (Elementor, Bricks, Divi, WPBakery, Beaver, Oxygen)
+            if ($pageBuilder) {
+                $pbTranslator = new \SAT\Content\PageBuilderTranslator($this->container);
+                $pbTranslator->translate($postId, $translatedId, $lang);
             }
 
             // SEO

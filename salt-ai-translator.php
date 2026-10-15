@@ -1,15 +1,39 @@
 <?php
 /**
  * Plugin Name: Salt AI Translator
- * Description: Pro-level AI translation system. OpenAI, DeepL, Google, Claude. Polylang, WPML, qTranslate-XT.
- * Version: 3.4.0
+ * Description: Pro-level AI translation system. OpenAI, DeepL, Google, Claude. Polylang, WPML, qTranslate-XT. Supports Gutenberg, Elementor, Bricks, Divi, WPBakery, Beaver Builder, Oxygen.
+ * Version: 3.5.1
  * Author: Tolga Koçak
  * Text Domain: salt-ai-translator
  * Domain Path: /languages
  *
- * @version 3.4.0
+ * @version 3.5.1
  *
  * @changelog
+ *   3.5.1 - 2026-06-25
+ *     - Fix: Admin bar frontend görünüm sorunu — Plugin::boot() sadece is_admin()||DOING_AJAX koşulunda
+ *            AdminController::register() çağırıyordu, frontend'de hook'lar hiç eklenmiyordu
+ *     - Fix: AdminController::registerFrontend() eklendi — frontend'de admin_bar_menu + wp_enqueue_scripts
+ *            + wp_ajax_sat_inline_translate + wp_ajax_sat_inline_translate_page
+ *     - Fix: SAT_VERSION 3.4.0 → 3.5.0 → 3.5.1 güncellendi
+ *     - Fix: enqueueFrontendAssets() — is_singular()/is_front_page() kısıtı kaldırıldı, her sayfada çalışır
+ *     - Add: addAdminBarItems() — sat-group parent node, postId>0 şartıyla Translate Page dropdown
+ *   3.5.0 - 2026-06-25
+ *     - Add: PageBuilderTranslator — page builder içerik çevirisi
+ *            detect(): elementor/bricks/divi/beaver/oxygen/wpbakery tespiti
+ *            Elementor: _elementor_data JSON, 30+ widget, bilinmeyen widget auto-scan
+ *            Bricks: _bricks_page_*_2 JSON, 3 area (header/content/footer)
+ *            Divi: et_pb_* shortcode attribute + içerik
+ *            WPBakery: [vc_row] shortcode parse
+ *            Beaver: _fl_builder_data unserialize, module settings
+ *            Oxygen: ct_builder_shortcodes + ct_builder_json
+ *     - Add: AdminController::showPageBuilderNotice() — min versiyon uyarısı
+ *            Elementor≥3.0, Bricks≥1.5, Divi≥4.0, Beaver≥2.0, Oxygen≥3.9, WPBakery≥6.0
+ *     - Add: AjaxHandler::getUntranslated() — page_builder field eklendi
+ *     - Add: posts.php — page builder badge (renkli etiket, post başlığında)
+ *     - Fix: Polylang::translatePost() — builder detect, post_content kopyala, builder meta ayrı çevir
+ *     - Fix: WPML::translatePost() — aynı page builder branch
+ *
  *   3.4.0 - 2026-06-16
  *     - Add: Translation Memory prune cron — haftalık WP Cron, 90 gün eski + 0 hit kayıtları siler
  *     - Add: Plugin::pruneTranslationMemory() — sat_memory_prune cron hook
@@ -199,7 +223,7 @@
 
 if (!defined('ABSPATH')) exit;
 
-define('SAT_VERSION',  '3.4.0');
+define('SAT_VERSION',  '3.5.1');
 define('SAT_DIR',      plugin_dir_path(__FILE__));
 define('SAT_URL',      plugin_dir_url(__FILE__));
 define('SAT_PREFIX',   'sat');

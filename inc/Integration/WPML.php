@@ -125,9 +125,14 @@ class WPML extends AbstractIntegration {
             $title = $this->translateText($source->post_title, $lang);
 
             $translator && method_exists($translator, 'setContext') && $translator->setContext(['field_name' => 'content']);
-            $content = has_blocks($source->post_content)
-                ? $this->translateBlocks($source->post_content, $lang)
-                : $this->translateText($source->post_content, $lang);
+            $pageBuilder = \SAT\Content\PageBuilderTranslator::detect($postId);
+            if ($pageBuilder) {
+                $content = $source->post_content; // page builder — meta'ya ayrıca yazılacak
+            } elseif (has_blocks($source->post_content)) {
+                $content = $this->translateBlocks($source->post_content, $lang);
+            } else {
+                $content = $this->translateText($source->post_content, $lang);
+            }
 
             $translateSlugs = $this->container->get('settings')->get('translate_slugs', 0);
             $updateData = [
@@ -142,6 +147,12 @@ class WPML extends AbstractIntegration {
             $this->syncTaxonomies($postId, $translatedId, $lang);
             $acfFields = $this->translateAcfFields($postId, $lang);
             foreach ($acfFields as $key => $value) update_field($key, $value, $translatedId);
+
+            // Page builder meta çevirisi
+            if ($pageBuilder) {
+                $pbTranslator = new \SAT\Content\PageBuilderTranslator($this->container);
+                $pbTranslator->translate($postId, $translatedId, $lang);
+            }
         } finally {
             $GLOBALS['sat_doing_translate'] = false;
         }

@@ -448,6 +448,21 @@ $default   = $integration ? $integration->getDefaultLanguage() : '';
     items.forEach(function(item) {
       const missingLangs = item.missing_langs || [];
       const missingTerms = item.missing_terms || [];
+      const pageBuilder  = item.page_builder || null;
+
+      // Page builder badge
+      const pbLabels = {
+        elementor: { label: 'Elementor', color: '#e2006a' },
+        bricks:    { label: 'Bricks',    color: '#dd6b20' },
+        divi:      { label: 'Divi',      color: '#7c3aed' },
+        beaver:    { label: 'Beaver',    color: '#f59e0b' },
+        oxygen:    { label: 'Oxygen',    color: '#0ea5e9' },
+        wpbakery:  { label: 'WPBakery',  color: '#64748b' },
+      };
+      const pbHtml = pageBuilder && pbLabels[pageBuilder]
+        ? `<span class="sat-badge" style="background:${pbLabels[pageBuilder].color};color:#fff;margin-left:4px;font-size:10px;">${pbLabels[pageBuilder].label}</span>`
+        : '';
+
       const missingHtml = missingLangs.length
         ? missingLangs.map(function(l) {
             const lang = (typeof l === 'object' && l.lang) ? l.lang : l;
@@ -463,7 +478,7 @@ $default   = $integration ? $integration->getDefaultLanguage() : '';
 
       tbody.append(`<tr data-id="${item.id}">
         <td><input type="checkbox" class="sat-post-check" value="${item.id}" data-title="${item.title}"></td>
-        <td>${item.title||'(no title)'}</td>
+        <td>${item.title||'(no title)'}${pbHtml}</td>
         <td><span class="sat-badge sat-badge-pending">${item.type}</span></td>
         <td>${missingHtml}</td>
         <td>${termsHtml}</td>

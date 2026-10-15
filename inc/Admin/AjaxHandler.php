@@ -43,6 +43,8 @@ class AjaxHandler {
             'sat_import_glossary'          => 'importGlossary',
             'sat_memory_stats'             => 'getMemoryStats',
             'sat_memory_clear'             => 'clearMemory',
+            'sat_inline_translate'         => 'inlineTranslate',
+            'sat_inline_translate_page'    => 'inlineTranslatePage',
         ];
 
         foreach ($actions as $action => $method) {
@@ -235,6 +237,7 @@ class AjaxHandler {
                     'type'          => $post->post_type ?? '',
                     'missing_langs' => $missing[$id] ?? [],
                     'missing_terms' => $missingTerms,
+                    'page_builder'  => \SAT\Content\PageBuilderTranslator::detect($id),
                 ];
             }, $paged);
 
@@ -1725,5 +1728,92 @@ class AjaxHandler {
         $mo .= $origPool . $transPool;
 
         file_put_contents($moPath, $mo);
+    }
+
+    // =========================================================
+    //  INLINE TRANSLATE — Frontend text seçimi + alternatifler
+    // =========================================================
+
+    /**
+     * Arbitrary text çeviri + alternatifler.
+     * Frontend inline translation popup'ı için.
+     *
+     * POST: text, lang, count (default 3), context (opsiyonel bilgi)
+     */
+    public function inlineTranslate(): void {
+        $this->checkNonce();
+        if (!current_user_can('edit_posts')) wp_send_json_error('Unauthorized');
+
+        $text    = wp_unslash($_POST['text'] ?? '');
+        $lang    = sanitize_key($_POST['lang'] ?? '');
+        $count   = min((int)($_POST['count'] ?? 3), 5);
+        $context = sanitize_text_field($_POST['context'] ?? '');
+
+        if (empty($text) || empty($lang)) wp_send_json_error('Missing text or lang');
+
+        $translator = $this->container->get('translator');
+        if (!$translator) wp_send_json_error('No translator configured');
+
+        $prompt = "Translate to {$lang}."
+            . ($context ? " Context: {$context}." : '')
+            . " Return exactly {$count} different translation options, one per line, numbered 1. 2. 3."
+            . " No explanations, just the translations.";
+
+        try {
+            $raw = $translator->translate($text, $lang, $prompt);
+
+            // "1. ...\n2. ...\n3. ..." formatını parse et
+            preg_match_all('/^\d+\.\s*(.+)$/m', $raw, $m);
+            $alternatives = array_map('trim', $m[1] ?? []);
+
+            // Fallback: numbered format yoksa her satır bir alternatif
+            if (count($alternatives) < $count) {
+                $lines = array_values(array_filter(array_map('trim', explode("\n", $raw))));
+                $alternatives = array_slice($lines, 0, $count);
+            }
+
+            // En az bir çeviri garantisi
+            if (empty($alternatives)) {
+                $alternatives = [trim($raw)];
+            }
+
+            wp_send_json_success([
+                'alternatives' => $alternatives,
+                'original'     => $text,
+                'lang'         => $lang,
+            ]);
+        } catch (\Throwable $e) {
+            wp_send_json_error($e->getMessage());
+        }
+    }
+
+    /**
+     * Tüm sayfayı (post) çevir — admin bar "Translate Page" butonu için.
+     *
+     * POST: post_id, lang
+     */
+    public function inlineTranslatePage(): void {
+        $this->checkNonce();
+        if (!current_user_can('edit_posts')) wp_send_json_error('Unauthorized');
+
+        $postId = (int) ($_POST['post_id'] ?? 0);
+        $lang   = sanitize_key($_POST['lang'] ?? '');
+
+        if (!$postId || !$lang) wp_send_json_error('Missing parameters');
+        if (!current_user_can('edit_post', $postId)) wp_send_json_error('Cannot edit this post');
+
+        $integration = $this->container->get('integration');
+        if (!$integration) wp_send_json_error('No integration');
+
+        try {
+            $translatedId = $integration->translatePost($postId, $lang);
+            wp_send_json_success([
+                'translated_id' => $translatedId,
+                'view_url'      => get_permalink($translatedId),
+                'edit_url'      => get_edit_post_link($translatedId, 'raw'),
+            ]);
+        } catch (\Throwable $e) {
+            wp_send_json_error($e->getMessage());
+        }
     }
 }

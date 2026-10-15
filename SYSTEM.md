@@ -1,14 +1,14 @@
 # Salt AI Translator — Plugin Sistem Dokümantasyonu
 
-**Son Güncelleme:** 2026-06-16  
-**Versiyon:** 3.4.0  
+**Son Güncelleme:** 2026-06-25  
+**Versiyon:** 3.5.0  
 **Yazar:** Tolga Koçak  
 
 ---
 
 ## 📌 TEK CÜMLE ÖZET
 
-Salt AI Translator, WordPress'te çok dilli içerik yönetimi için AI destekli çeviri sağlayan bir plugin'dir. OpenAI, DeepL, Google Translate, Claude ve Azure OpenAI destekler. Polylang, WPML ve qTranslate-XT ile entegre çalışır. Post, term, ACF alanları, SEO meta verileri ve görsel alt metinlerini otomatik çevirir.
+Salt AI Translator, WordPress'te çok dilli içerik yönetimi için AI destekli çeviri sağlayan bir plugin'dir. OpenAI, DeepL, Google Translate, Claude ve Azure OpenAI destekler. Polylang, WPML ve qTranslate-XT ile entegre çalışır. Post, term, ACF alanları, SEO meta verileri, görsel alt metinleri, Gutenberg blocks ve Elementor/Bricks/Divi/WPBakery/Beaver/Oxygen gibi page builder içeriklerini otomatik çevirir.
 
 ---
 
@@ -19,12 +19,16 @@ salt-ai-translator/
 ├── salt-ai-translator.php          ← Plugin entry point, defines, bootstrap
 ├── composer.json
 ├── assets/
-│   ├── css/admin.css               ← Tüm admin UI stilleri
-│   └── js/admin.js                 ← Global admin JS (tab, chip, toast, queue)
+│   ├── css/
+│   │   ├── admin.css               ← Tüm admin UI stilleri
+│   │   └── frontend-translate.css  ← Frontend admin bar + inline popup stilleri
+│   └── js/
+│       ├── admin.js                ← Global admin JS (tab, chip, toast, queue)
+│       └── frontend-translate.js  ← Frontend admin bar + inline translate JS (v1.1.0)
 ├── admin/
 │   └── views/                      ← Her admin sayfasının PHP/HTML+JS view'ı
 │       ├── dashboard.php           ← Ana dashboard (istatistikler)
-│       ├── posts.php               ← Post çevirisi
+│       ├── posts.php               ← Post çevirisi (page builder badge dahil)
 │       ├── terms.php               ← Taxonomy/term çevirisi
 │       ├── media.php               ← Görsel alt text çevirisi
 │       ├── others.php              ← Menü ve string çevirisi
@@ -35,13 +39,15 @@ salt-ai-translator/
 │       └── meta-box.php            ← Post editörü sidebar widget
 └── inc/
     ├── Admin/
-    │   ├── AdminController.php     ← Menü kaydı, asset enqueue, meta box
+    │   ├── AdminController.php     ← Menü kaydı, asset enqueue, meta box, page builder notice
+    │   │                              registerFrontend() — sadece frontend hook'ları
     │   ├── AjaxHandler.php         ← Tüm AJAX endpoint'leri
     │   └── ExportImport.php        ← XLSX/CSV export + import + XLSX parse
     ├── Content/
     │   ├── AcfTranslator.php       ← ACF field çevirisi
-    │   ├── BlockTranslator.php     ← Gutenberg block çevirisi
-    │   └── MediaTranslator.php     ← Görsel alt text üretimi/çevirisi
+    │   ├── BlockTranslator.php     ← Gutenberg block çevirisi (tüm core/üçüncü taraf bloklar)
+    │   ├── MediaTranslator.php     ← Görsel alt text üretimi/çevirisi
+    │   └── PageBuilderTranslator.php ← Page builder içerik çevirisi (v1.0.0)
     ├── Core/
     │   ├── Autoloader.php          ← PSR-4 autoloader
     │   ├── Container.php           ← Servis container (DI)
@@ -86,17 +92,15 @@ salt-ai-translator.php
       → Container::build()
           → Settings (DB'den oku)
           → Installer (DB tablosu kontrol)
-          → Logger
-          → CreditTracker
-          → Translator (settings'den hangisi seçildiyse)
-          → Integration (Polylang/WPML/qTranslate-XT detect)
-          → Queue (QueueManager)
-          → SEO (Yoast veya RankMath)
-      → AdminController::register()
-          → admin_menu → registerMenus()
-          → admin_enqueue_scripts → enqueueAssets()
-          → add_meta_boxes → registerMetaBoxes()
-          → AjaxHandler::register() (tüm wp_ajax_ hook'ları)
+          → Logger, CreditTracker, Translator, Integration, Queue, SEO
+      → is_admin() || DOING_AJAX
+            → AdminController::register() — tam admin + frontend hook'ları
+         else (frontend)
+            → AdminController::registerFrontend()
+                  → admin_bar_menu → addAdminBarItems()
+                  → wp_enqueue_scripts → enqueueFrontendAssets()
+                  → wp_ajax_sat_inline_translate
+                  → wp_ajax_sat_inline_translate_page
 ```
 
 ---
@@ -220,9 +224,86 @@ AbstractTranslator::translate($text, $lang, $prompt)
 
 ---
 
+## 🏗️ PAGE BUILDER DESTEĞİ (`inc/Content/PageBuilderTranslator.php`) — v1.0.0
+
+### Desteklenen Builder'lar
+
+| Builder | Meta Key | Minimum Versiyon | Detect Yöntemi |
+|---------|----------|-----------------|----------------|
+| Elementor | `_elementor_data` (JSON) | 3.0.0 | `_elementor_edit_mode === 'builder'` |
+| Bricks | `_bricks_page_content_2` (JSON) | 1.5.0 | `_bricks_editor_mode` veya meta key var mı |
+| Divi | `post_content` (et_pb_* shortcodes) | 4.0.0 | `_et_pb_use_builder === 'on'` |
+| Beaver Builder | `_fl_builder_data` (serialized) | 2.0.0 | `_fl_builder_enabled` truthy |
+| Oxygen | `ct_builder_shortcodes` + `ct_builder_json` | 3.9.0 | `ct_builder_shortcodes` meta var mı |
+| WPBakery | `post_content` ([vc_row] shortcodes) | 6.0.0 | post_content'te `[vc_row` var mı |
+
+### Çalışma Mantığı
+
+```
+translatePost($postId, $lang)
+  → PageBuilderTranslator::detect($postId)  ← builder type
+  → has_blocks() → false (builder içeriği)
+  → post_content kopyala (değiştirme)
+  → wp_update_post(title + copied content)
+  → $pbTranslator->translate($postId, $translatedId, $lang)
+       Elementor → _elementor_data JSON parse → widget settings çevir → update_post_meta
+       Bricks    → _bricks_page_*_2 JSON parse → element settings çevir → update_post_meta
+       Divi      → post_content shortcode parse → attr + text çevir → wp_update_post
+       WPBakery  → post_content shortcode parse → attr + text çevir → wp_update_post
+       Beaver    → _fl_builder_data unserialize → module settings çevir → update_post_meta
+       Oxygen    → ct_builder_shortcodes + ct_builder_json çevir → update_post_meta
+```
+
+### Elementor Widget Desteği
+
+`ELEMENTOR_WIDGET_KEYS` const'u ile 30+ widget türü tanımlı. Bilinmeyen widget'larda otomatik string taraması yapılır (URL/renk/ID gibi değerler atlanır).
+
+### Version Uyarısı
+
+`AdminController::showPageBuilderNotice()` — SAT admin sayfalarında, minimum versiyonun altındaki builder'lar için sarı warning notice gösterir. Örnek:
+
+```
+⚠️ Salt AI Translator — Page Builder Compatibility:
+• [Elementor] v2.9.0 detected — minimum required: v3.0.0. Translation may be incomplete.
+```
+
+### Posts Sayfası Badge
+
+`getUntranslated()` artık her post için `page_builder` field'ı döndürüyor. Posts tablosunda post başlığının yanında renkli builder badge'i gösteriliyor.
+
+---
+
 ## 📅 CHANGELOG
 
 ```
+3.5.1 - 2026-06-25
+  Fix: Admin bar frontend görünüm sorunu — Plugin::boot() sadece is_admin()||DOING_AJAX'ta
+       AdminController::register() çağırıyordu. Frontend'de hook'lar hiç eklenmiyor, admin bar boş kalıyordu.
+       Çözüm: Frontend için AdminController::registerFrontend() eklendi.
+       registerFrontend() → admin_bar_menu + wp_enqueue_scripts + sat_inline_translate(+page) AJAX
+  Fix: SAT_VERSION 3.4.0 → 3.5.0 güncellendi (salt-ai-translator.php'de eksik kalmıştı)
+  Fix: enqueueFrontendAssets() — is_singular()/is_front_page() kısıtı kaldırıldı
+       Artık her frontend sayfasında (archive, taxonomy dahil) Inline Mode çalışır
+       Translate Page sadece singular/front_page'de gösterilir (postId=0 → JS gizler)
+  Add: AdminController::addAdminBarItems() — sat-group parent node, postId>0 şartı ile Translate Page
+  Add: frontend-translate.js v1.1.0 — postId=0 guard, initAdminBar null check'leri
+
+3.5.0 - 2026-06-25
+  Add: PageBuilderTranslator.php — Page builder içerik çevirisi
+       detect() static metod: builder type tespiti (elementor/bricks/divi/beaver/oxygen/wpbakery)
+       Elementor: _elementor_data JSON parse, 30+ widget type tanımlı, bilinmeyen widget auto-scan
+       Bricks: _bricks_page_header/content/footer_2 JSON parse, element settings çevirisi
+       Divi: et_pb_* shortcode attribute + content çevirisi, builder cache temizleme
+       WPBakery: [vc_row] shortcode parse, text attribute çevirisi
+       Beaver Builder: _fl_builder_data unserialize, module settings çevirisi
+       Oxygen: ct_builder_shortcodes + ct_builder_json çevirisi
+  Add: AdminController::showPageBuilderNotice() — minimum versiyon kontrolü, SAT sayfalarında uyarı
+       Elementor ≥3.0.0, Bricks ≥1.5.0, Divi ≥4.0.0, Beaver ≥2.0.0, Oxygen ≥3.9.0, WPBakery ≥6.0.0
+  Add: AjaxHandler::getUntranslated() — her post için page_builder field eklendi
+  Add: posts.php — page builder badge (Elementor/Bricks/Divi renkli etiket) post başlığında
+  Fix: Polylang::translatePost() — page builder detect edilince post_content kopyalanır, builder meta ayrıca çevrilir
+  Fix: WPML::translatePost() — aynı page builder branch eklendi
+
 3.4.0 - 2026-06-16
   Add: Translation Memory prune cron — haftalık WP Cron, 90 gün eski + 0 hit kayıtları siler
   Add: sat_memory_last_prune option — son prune zamanı + silinen kayıt sayısı
@@ -643,3 +724,115 @@ assets/css/admin.css
 - [ ] **PO background queue** — PO dosya çevirisi için background queue desteği
 - [ ] **Scheduled auto re-translation** — WP Cron ile haftalık/günlük yeni içerik otomatik queue'ya ekle
 - [ ] **Translation Memory prune cron** — 90 günden eski, sıfır hit'li kayıtları haftalık otomatik temizle
+
+---
+
+## 🥊 KOMPETİTİF ANALİZ — AutoPoly vs Salt AI Translator
+
+**Analiz tarihi:** 2026-06-25  
+**Rakip:** AutoPoly - AI Translation For Polylang (coolplugins.net) v1.4.15
+
+---
+
+### ✅ BİZİN ÜSTÜNLÜKLER
+
+| Özellik | Salt AI Translator | AutoPoly |
+|---------|-------------------|---------|
+| Çeviri Provider'ları | **6 provider** (OpenAI, DeepL, Google, Claude, Azure, LibreTranslate) | Yandex widget + Chrome AI (free); OpenAI, Gemini, DeepL, Google (Pro'da) |
+| Translation Memory | ✅ DB tabanlı, transient cache, prune cron | ❌ Yok |
+| Round-robin API Key | ✅ Birden fazla key sırayla | ❌ Yok |
+| WPML Desteği | ✅ | ❌ Sadece Polylang |
+| qTranslate-XT Desteği | ✅ | ❌ Yok |
+| Export / Import | ✅ Full XLSX+CSV, dry-run, diff log | ❌ Yok |
+| Glossary | ✅ + XLSX/CSV import | ❌ Yok |
+| PO Dosyası Çevirisi | ✅ AI ile .po → .mo recompile (msgfmt gerekmez) | ❌ Yok |
+| Rate Limit (429) | ✅ Retry-After + exponential backoff | ❌ Yok |
+| Action Scheduler | ✅ AS + WP Cron fallback | ❌ Yok |
+| String (Polylang) Çevirisi | ✅ Group bazlı batch | ❌ Yok |
+| Menu Çevirisi | ✅ AI + Polylang nav_menus sync | ❌ Yok |
+| Media Alt Text (Vision) | ✅ AI ile üretim + çeviri | ❌ Yok |
+| Field-level Exclusion | ✅ Post type/taxonomy bazında title/name çevrilmesin | ❌ Yok |
+| Translation Lock | ✅ Post başına "asla çevirme" koruması | ❌ Yok |
+| Cost Estimator | ✅ Token bazlı tahmini maliyet | ❌ Yok |
+| SEO (Yoast + RankMath) | ✅ Meta desc, SEO title, OG tags | ✅ (onlar da var, Pro'da Elementor SEO da) |
+| Free'de tam API kullanımı | ✅ Tüm providerlar API key ile ücretsiz | ❌ Gerçek AI Pro'da |
+
+---
+
+### ⚠️ AUTOPOLY'DE VAR, BİZDE YOK (Backlog'a eklendi)
+
+#### 1. Elementor Desteği 🔴 Öncelik: Yüksek
+AutoPoly Elementor widget'larını parse edip section/widget bazında çeviriyor.
+Bizim `BlockTranslator.php` Gutenberg'e odaklı, Elementor'a hiç dokunmuyor.
+Elementor kullanan projelerde biz işlevsiziz.
+
+**Yapılacak:**
+- `inc/Content/ElementorTranslator.php` — Elementor `_elementor_data` post meta JSON'ını parse et
+- Widget type'larına göre hangi key'lerin çevrileceğini belirle (text, title, description, button_text vb.)
+- `AbstractIntegration::translatePost()` akışına Elementor branch ekle
+
+#### 2. Front-end Inline Translation 🟡 Öncelik: Orta
+AutoPoly'de sayfa üstünde floating buton + modal açılıyor, seçili bloğu/widget'ı direkt çeviriyorsun.
+Biz sadece WP Admin'den çeviriyoruz.
+
+**Yapılacak:**
+- Admin bar'a "Translate This Page" butonu ekle (sadece çeviri dilinde görüntülenirken)
+- Veya Polylang'ın yeni çeviri sayfası açıkken sidebar widget'ına "Translate Content" butonu
+- Block bazında inline çeviri daha komplex — Gutenberg editor içinde `InspectorControls` ile blok başına translate butonu
+
+#### 3. Block Rules JSON (Extensible Custom Block Desteği) 🟡 Öncelik: Orta
+AutoPoly `block-rules.json` ile 50+ block'un hangi attribute'ının çevrileceğini declarative olarak tanımlıyor.
+Kullanıcı admin'den custom block ekleyebiliyor.
+Biz `BlockTranslator.php`'de hard-coded mantık kullanıyoruz.
+
+**Yapılacak:**
+- `inc/Content/block-rules.json` oluştur — aynı JSON formatı
+- `BlockTranslator::getTranslatableAttributes($block_name)` → JSON'dan oku
+- Admin'de "Custom Block Rules" tab — kullanıcı kendi block kurallarını ekleyebilsin
+- `sat_block_rules` filter ile üçüncü taraf genişletme imkânı
+
+#### 4. Post Type Listesinde Dil Badge'leri 🟢 Öncelik: Düşük
+AutoPoly post type listesinde dil başına kaç post var gösteriyor.
+UX detayı ama şık.
+
+**Yapılacak:**
+- `AdminController` → `manage_{post_type}_posts_columns` + `views_{screen}` filter
+- Her dil için post sayısı badge'i
+
+---
+
+### 🎯 RAKIP'İN ZAYIF NOKTALARI (Satış Avantajımız)
+
+1. **Free'de işe yaramaz** — Yandex widget ve Chrome AI kalitesiz. Müşteri ilk günden ödeme yapmalı.
+   Bizde: API key al, kullan. Maliyeti sen kontrol et.
+
+2. **Translation Memory yok** — Her çeviride tam API çağrısı. 1000 post × 3 dil = 3000 API call.
+   Bizde: Aynı metin memory'den gelir. Tasarruf %30-70 arası olabilir.
+
+3. **Polylang only** — WPML kullanan müşteri pes eder.
+   Bizde: Polylang + WPML + qTranslate-XT.
+
+4. **Export/Import yok** — Ajans workflow'u imkânsız. Müşteriye XLSX ver, onlar düzeltsin, geri import et.
+   Bizde: Tam bu var.
+
+5. **Rate limit crash** — Büyük sitede 429 gelince çeviri durur, veri kayıp riski.
+   Bizde: Otomatik retry + backoff.
+
+6. **Glossary yok** — Marka adları, teknik terimler yanlış çevriliyor.
+   Bizde: Glossary + XLSX import.
+
+---
+
+### 📋 BACKLOG'A EKLENEN GÖREVLER
+
+- [x] **Front-end Inline Translation v1** — Admin bar "🌐 SAT" → Inline Mode toggle → metin seç → popup → 3 alternatif → Copy/Apply. v3.5.1'de tamamlandı.
+- [ ] **Inline Translation v2 — DOM Apply + DB Kayıt** — Seçili çeviriyi DOM'a uygula ve arka planda DB'ye kaydet.
+  - **Zorluk:** Seçilen text node'unun hangi post/term/menü'ye ait olduğunu tespit etmek gerekiyor.
+  - **Yaklaşım:**
+    - DOM element'ine en yakın `data-post-id`, `data-term-id` gibi attribute ara
+    - Ya da sayfadaki `post_id` (`satFrontend.postId`) baz alarak `post_content`'te source text'i find & replace yap
+    - Nav menu item'ları için: `<li id="menu-item-{ID}">` pattern'ından post ID'yi çıkar → `wp_update_post` ile `post_title` güncelle
+    - Menü öğesi: `li.menu-item` → data-id → `sat_inline_apply` AJAX endpoint → `wp_update_post($id, ['post_title' => $newText])`
+  - **AJAX endpoint:** `sat_inline_apply` — `{ post_id, field, old_text, new_text, lang }`
+  - **Block Rules JSON** — declarative attribute mapping, admin'den custom rule ekleme
+- [ ] **Post list dil badge'leri** — `views_edit-{post_type}` filter ile dil sayıları
